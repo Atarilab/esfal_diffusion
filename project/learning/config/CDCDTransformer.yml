@@ -1,0 +1,49 @@
+DATA:
+  dataset: "24022024_8g_12r_3p"
+  data_dir: "/home/victor/Datasets/ESFAL/multigoal_removed_box/"
+  batch_size: 64
+  return_index: True
+  augmentation: False
+  shuffle: True
+  noise_level: 0.0
+
+MODEL:
+  model_name: CDCDTransformerConditioned
+  PARAMS: # arguments that will be passed to the chosen models
+    timesteps: 50
+    output_length: 8
+    exclude_first: 10
+    hidden_dim: 64
+    n_layers: 6
+    num_heads: 8
+    dropout: 0.15
+    prediction_type: "sample"
+    self_conditioning: True
+
+TRAINING: # arguments that will be passed to the trainer
+  criterion_str: CrossEntropyLoss
+  ema_power: 0.
+  optimizer:
+    optimizer_name: AdamW
+    PARAMS:
+      lr: 0.001
+      weight_decay: 1.0e-6
+  epochs: 100
+  logdir: "./logs/CDCD_TransformerMean/24022024_8g_12r_3p"
+  use_logger: True
+  lr_scheduler:
+    lr_scheduler_name: ExponentialLR
+    PARAMS:
+      gamma: 0.96
+
+# SWEEP: # arguments to sweep over and their values
+#   latent_dim: [32, 64]
+#   points_per_circle:
+#     min: 3
+#     max: 10
+#     n: 3
+#   lr:
+#     min: 0.0001
+#     max: 0.001
+#     n: 2
+#     logspace: True

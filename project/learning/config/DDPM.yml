@@ -1,0 +1,34 @@
+DATA: # arguments that will be passed to get_dataloaders
+  dataset: "record_"
+  data_dir: "/home/atari_ws/data/"
+  batch_size: 512
+  normalize: True
+  shuffle: True
+  #noise_level: 0.0
+
+MODEL:
+  model_name: AttentionConditionalUnet1D
+  PARAMS: # arguments that will be passed to the chosen models
+    timesteps: 50
+    input_dim: 3
+    embedding_dim: 3
+    diffusion_step_embed_dim: 32
+    down_dims: {32, 64, 128}
+    kernel_size: 3
+    num_heads: 1
+    exclude_first: 14
+    beta_start: 1.0e-4
+    beta_end: 0.3
+    beta_schedule: scaled_linear
+    # prediction_type: sample
+
+TRAINING: # arguments that will be passed to the trainer
+  criterion_str: MSELoss
+  optimizer:
+    optimizer_name: AdamW 
+    PARAMS:
+      lr: 0.0005
+      # weight_decay: 1.0e-6
+  epochs: 1000
+  logdir: "./logs/Attention_UNet_DDPM/record_/"
+  use_logger: True

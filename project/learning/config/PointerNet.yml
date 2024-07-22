@@ -1,0 +1,31 @@
+DATA:
+  dataset: "multigoal_removed_box/24022024_8g_12r_3p"
+  data_dir: "/home/victor/Datasets/ESFAL/"
+  batch_size: 64
+  return_index: True
+  augmentation: False
+  shuffle: True
+  noise_level: 0.0
+
+MODEL:
+  model_name: "PointerNetHidden"
+  PARAMS:
+    input_dim: 3
+    output_length: 8
+    exclude_first: 10
+    hidden_dim: 64
+    lstm_layers: 2
+    dropout: 0.1
+    bidir: False
+
+TRAINING:
+  criterion_str: CrossEntropyLoss
+  optimizer_str: Adam
+  lr: 0.001
+  epochs: 100
+  logdir: "./logs/PtrNet/24022024_8g_12r_3p"
+  use_logger: True
+  lr_scheduler:
+    lr_scheduler_name: ExponentialLR
+    PARAMS:
+      gamma: 0.995
