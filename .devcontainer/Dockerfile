@@ -73,6 +73,7 @@ RUN python3 -m pip install --upgrade pip pytest matplotlib jupyter PyQt5
 RUN python3 -m pip install --upgrade robot_descriptions
 RUN python3 -m pip install --upgrade tyro torch diffusers tensorboard scikit-learn einops
 RUN python3 -m pip install --upgrade opencv-python xacro moviepy keyboard
+RUN python3 -m pip install --upgrade mujoco
 # Debug Dependencies
 RUN pip3 install memray memory-profiler Pympler
 
