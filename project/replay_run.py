@@ -9,13 +9,16 @@ def main(exp_dir : str,
          viewer : bool = True,
          record_video : bool = True,
          video_subdir : str = "",
-         controller : str = "biconmp"
+         controller : str = "biconmp",
+         model_path : str = "",
          ):
     
     replay = ExperimentReplay(exp_dir)
     
+    # Same gait as in the dataset
     replay.run(
         controller=controller,
+        model_path=model_path,
         i_env=env,
         i_goal=goal,
         i_cp=cp,

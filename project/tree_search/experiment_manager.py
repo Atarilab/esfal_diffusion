@@ -2,30 +2,34 @@ import os
 import glob
 import pickle
 import time
-import pybullet
+import mujoco
 import numpy as np
 import yaml
 import tqdm
 import multiprocessing
+import gc
 
 from environment.simulator import SteppingStonesSimulator
 from environment.stepping_stones import SteppingStonesEnv
-from py_pin_wrapper.abstract.robot import SoloRobotWrapper
+from mj_pin_wrapper.mj_pin_robot import MJPinQuadRobotWrapper
 from mpc_controller.bicon_mpc import BiConMPC
-from mpc_controller.motions.cyclic.solo12_trot import trot
-from mpc_controller.motions.cyclic.solo12_jump import jump
+from mpc_controller.motions.cyclic.go2_trot import trot
+from mpc_controller.motions.cyclic.go2_jump import jump
+from mj_pin_wrapper.sim_env.utils import RobotModelLoader
 from tree_search.mcts_stepping_stones import MCTSSteppingStonesKin
-from tree_search.data_recorder import JumpDataRecorder
+from tree_search.data_recorder import ContactsDataRecorder
+from utils.config import Go2Config
 
 class ExperimentManager(object):
     DEFAULT_STEPPING_STONES_HEIGHT = 0.1
-    DEFAULT_HEIGHT_RATIO = 0.3
-    DEFAULT_POS_RATIO = 0.4
+    DEFAULT_HEIGHT_RATIO = 0.2
+    DEFAULT_POS_RATIO = 0.8
     DEFAULT_MAX_STEP_SIZE = 0.23
-    DEFAULT_SIZE_RATIO = 0.7
-    DEFAULT_C = 0.005
+    DEFAULT_MAX_IT = 10000
+    DEFAULT_SIZE_RATIO = 0.55
+    DEFAULT_C = 4.0e-2
     DEFAULT_W = 1.
-    DEFAULT_ALPHA_EXPLORATION = 0.1
+    DEFAULT_ALPHA_EXPLORATION = 0.
     DEFAULT_SIM_STEP = 1
     DEFAULT_GAIT = "jump"
     CONFIG_FILE_NAME = "experiment_config.yaml"
@@ -56,6 +60,7 @@ class ExperimentManager(object):
             "mcts_alpha_exploration" : ExperimentManager.DEFAULT_ALPHA_EXPLORATION,
             "mcts_sim_step" : ExperimentManager.DEFAULT_SIM_STEP,
             "mcts_max_step_size" : ExperimentManager.DEFAULT_MAX_STEP_SIZE,
+            "mcts_n_it" : ExperimentManager.DEFAULT_MAX_IT,
             "gait" : ExperimentManager.DEFAULT_GAIT,
         }
         optionals_parameters.update(kwargs)
@@ -68,11 +73,9 @@ class ExperimentManager(object):
             os.makedirs(self.experiment_dir, exist_ok=True)
             self.save_experiment_parameters(self.experiment_dir)
         
-
-        
-        
     def get_stones_env(self) -> SteppingStonesEnv:
         stones_env = SteppingStonesEnv(
+            spacing=(0.19, 0.13),
             height=self.stepping_stones_height,
             randomize_height_ratio=self.randomize_height_ratio,
             randomize_pos_ratio=self.randomize_pos_ratio,
@@ -81,25 +84,30 @@ class ExperimentManager(object):
             )
         return stones_env
 
-    def get_mcts(self, stones_env : SteppingStonesEnv) -> MCTSSteppingStonesKin:
+    def get_mcts(self, robot_paths : list[str], stones_env : SteppingStonesEnv) -> MCTSSteppingStonesKin:
         """
         Setup a mcts run.
         """
-        robot = SoloRobotWrapper(server = pybullet.DIRECT)
+        cfg = Go2Config
+        robot = MJPinQuadRobotWrapper(
+            *robot_paths,
+            rotor_inertia=cfg.rotor_inertia,
+            gear_ratio=cfg.gear_ratio,
+        )
 
-        controller = BiConMPC(robot, height_offset=self.stepping_stones_height)
+        controller = BiConMPC(robot.pin, height_offset=self.stepping_stones_height)
         gait = trot if self.gait == "trot" else jump
         controller.set_gait_params(gait)
         
-        data_recorder = JumpDataRecorder(
-            robot,
+        data_recorder = ContactsDataRecorder(
+            robot.mj,
             stones_env,
             record_dir=self.experiment_dir
             )
         
         sim = SteppingStonesSimulator(
             stepping_stones_env=stones_env,
-            robot=robot,
+            robot=robot.mj,
             controller=controller,
             data_recorder=data_recorder
             )
@@ -111,12 +119,17 @@ class ExperimentManager(object):
             W=self.mcts_W,
             alpha_exploration=self.mcts_alpha_exploration,
             max_step_size=self.mcts_max_step_size,
+            max_solution_search=self.N_sol_per_goal,
             )
         
         return mcts
 
-    def run_single_experiment(self, i_env):
-        np.random.seed(i_env + int(time.time() % 0.1 * 1000))
+    def run_single_experiment(self, robot_paths : list, i_env : int):
+        """
+        Run mcts on a given stepping stones environment.
+        - Run MCTS for <N_goal_per_env>.
+        - Rerun each plan found <N_repeat_per_sol> with randomized initial states.
+        """
         
         stones_env = self.get_stones_env()
         
@@ -126,9 +139,9 @@ class ExperimentManager(object):
         
         ### Set randomized goal
         for i_goal in range(self.N_goal_per_env):
-            np.random.seed(i_env + i_goal + int(time.time() % 0.1 * 1000))
+            np.random.seed(i_env + i_goal + int(time.time() % 0.1 * 1111 * (i_env + 10 * (i_goal + 1))))
             
-            mcts = self.get_mcts(stones_env)
+            mcts = self.get_mcts(robot_paths, stones_env)
             mcts.sim.set_start_and_goal()
                 
             # Save stones once some are removed
@@ -143,8 +156,9 @@ class ExperimentManager(object):
             # Set data recorder path to goal dir
             mcts.sim.data_recorder.update_record_dir(goal_dir)
             
+            # Run MCTS
             try:
-                mcts.search(num_iterations=10000)
+                mcts.search(num_iterations=self.mcts_n_it)
             except Exception as e:
                 print(e)
             
@@ -154,20 +168,39 @@ class ExperimentManager(object):
             ### Record contact plan for new randomize initial state
             for contact_plan in mcts.all_solutions: # Solutions are already recorded
                 for _ in range(self.N_repeat_per_sol):
-                    mcts.sim.run_contact_plan(contact_plan, randomize = True)
+                    mcts.sim.run_contact_plan(contact_plan, randomize=True, real_time=False, verbose=False)
                 
-        mcts.sim.robot.env.disconnect()
-        del mcts
+        del mcts, stones_env
+        gc.collect()
             
     def start(self, n_cores : int = 10):
         """
         Launch experiment on different cores.
         """
-        N_old = len(list(filter(lambda path : os.path.isdir(os.path.join(self.experiment_dir, path)), os.listdir(self.experiment_dir))))
-        with multiprocessing.Pool(n_cores) as pool:
-            for _ in tqdm.tqdm(pool.imap_unordered(self.run_single_experiment, range(N_old, self.N_runs + N_old)), total=self.N_runs):
-                pass
-                  
+        # In case experiment is run in a existing directory. Set i_env accordingly
+        N_old_env = len(list(filter(lambda path : os.path.isdir(os.path.join(self.experiment_dir, path)), os.listdir(self.experiment_dir))))
+        
+        cfg = Go2Config
+        robot_paths = *RobotModelLoader.get_paths(cfg.name, mesh_dir=cfg.mesh_dir),
+        
+        processes = []
+        for i_env in tqdm.trange(self.N_runs):
+            p = multiprocessing.Process(target=self.run_single_experiment, args=[robot_paths, i_env + N_old_env])
+            processes.append(p)
+            p.start()
+
+            # Maintain the number of concurrent processes
+            while len(processes) >= n_cores:
+                for p in processes:
+                    if not p.is_alive():
+                        processes.remove(p)
+                        break
+                time.sleep(0.1)  # Small sleep to avoid busy waiting
+
+        # Join any remaining processes
+        for p in processes:
+            p.join()
+    
     def gather_data_experiment(self):
         all_data = {}
         
@@ -179,7 +212,7 @@ class ExperimentManager(object):
                 goal_name = f"goal_{i_goal}"
                 goal_dir = os.path.join(env_dir, goal_name)
                 
-                file_path = os.path.join(goal_dir, JumpDataRecorder.FILE_NAME)
+                file_path = os.path.join(goal_dir, ContactsDataRecorder.FILE_NAME)
                 
                 if os.path.isfile(file_path):
                     with np.load(file_path) as data:
@@ -193,9 +226,9 @@ class ExperimentManager(object):
             all_data[key] = np.concatenate(all_data[key], axis=0)
         
         # Save combined data to a single .npz file
-        output_file = os.path.join(self.experiment_dir, JumpDataRecorder.FILE_NAME)
+        output_file = os.path.join(self.experiment_dir, ContactsDataRecorder.FILE_NAME)
         np.savez(output_file, **all_data)
-        
+    
     def gather_performance_data(self):
         all_performance_data = {}
 
@@ -238,6 +271,8 @@ class ExperimentManager(object):
             "mcts_W" : self.mcts_W,
             "mcts_alpha_exploration" : self.mcts_alpha_exploration,
             "mcts_sim_step" : self.mcts_sim_step,
+            "mcts_max_step_size" : self.mcts_max_step_size,
+            "mcts_n_it" : self.mcts_n_it,
             "size_ratio" : self.size_ratio,
             "gait" : self.gait,
         }

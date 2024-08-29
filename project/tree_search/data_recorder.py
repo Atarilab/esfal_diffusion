@@ -2,13 +2,13 @@ import os
 import time
 import numpy as np
 
-from py_pin_wrapper.abstract.data_recorder import DataRecorderAbstract
-from py_pin_wrapper.abstract.robot import SoloRobotWrapper
+from mj_pin_wrapper.abstract.data_recorder import DataRecorderAbstract
+from mj_pin_wrapper.mj_robot import MJQuadRobotWrapper
 from environment.stepping_stones import SteppingStonesEnv
 
 
 ### Data recorder
-class JumpDataRecorder(DataRecorderAbstract):
+class ContactsDataRecorder(DataRecorderAbstract):
     FILE_NAME = "data.npz"
     STATE_NAME = "state"
     CONTACT_NAME = "contact_w"
@@ -18,16 +18,15 @@ class JumpDataRecorder(DataRecorderAbstract):
     GOAL_NAME = "goal_w"
     
     def __init__(self,
-                 robot : SoloRobotWrapper,
+                 robot : MJQuadRobotWrapper,
                  stepping_stones_env : SteppingStonesEnv,
                  record_dir: str = "",
-                 next_target : int = 2
+                 next_cnt_to_record : int = 2
                  ) -> None:
         super().__init__(record_dir)
         self.robot = robot
         self.stepping_stones = stepping_stones_env
-        self.next_target = next_target
-        self.i_jump = 0
+        self.next_cnt_to_record = next_cnt_to_record
         
         self.update_record_dir(record_dir)
 
@@ -35,23 +34,22 @@ class JumpDataRecorder(DataRecorderAbstract):
         self.record_state = []
         # [c1, c2, c3, c4] in world frame
         self.record_feet_pos_w = []
-        # [c1, c2, c3, c4] * next_target, stepping stones in world frame
+        # [c1, c2, c3, c4] * next_cnt_to_record, stepping stones in world frame
         self.record_target_contact = []
-        # [c1, c2, c3, c4] * next_target, stepping stones id
+        # [c1, c2, c3, c4] * next_cnt_to_record, stepping stones id
         self.record_target_contact_id = []
         
     def update_record_dir(self, record_dir:str):
         os.makedirs(record_dir, exist_ok=True)
-        self.saving_file_path = os.path.join(record_dir, JumpDataRecorder.FILE_NAME)
+        self.saving_file_path = os.path.join(record_dir, ContactsDataRecorder.FILE_NAME)
 
     def reset(self) -> None:
-        self.i_jump = 0
         self.record_state = []
         self.record_feet_pos_w = []
         self.record_target_contact = []
         self.record_target_contact_id = []
 
-    def record(self, q: np.array, v: np.array, contact_plan_id : np.ndarray) -> None:
+    def record(self, q: np.array, v: np.array, contact_plan_id : np.ndarray, i_jump : int) -> None:
         """ 
         Record state, current contact, target contact locations / id.
         All expressed in world frame.
@@ -63,14 +61,14 @@ class JumpDataRecorder(DataRecorderAbstract):
         self.goal_locations_w = self.stepping_stones.positions[contact_plan_id[-1]]
 
         # Current contacts
-        contact_locations_w = self.robot.get_foot_locations_world()
+        contact_locations_w = self.robot.get_foot_pos_world()
         self.record_feet_pos_w.append(contact_locations_w)
-
+        
         if len(contact_plan_id) > 1:
             # Target contact locations w
             all_targets_contact_id = []
-            for i_target in range(self.next_target):
-                i_target = min(self.i_jump + i_target, len(contact_plan_id) - 1)
+            for i_target in range(self.next_cnt_to_record):
+                i_target = min(i_jump + i_target, len(contact_plan_id) - 1)
                 all_targets_contact_id.extend(contact_plan_id[i_target])
 
             target_contact_w = self.stepping_stones.positions[all_targets_contact_id]
@@ -78,11 +76,11 @@ class JumpDataRecorder(DataRecorderAbstract):
             
             # Target contact id
             self.record_target_contact_id.append(all_targets_contact_id)
-        else:
-            self.record_target_contact.append(np.zeros((self.next_target * 4, 3)))
-            self.record_target_contact_id.append(np.zeros((self.next_target * 4)))
             
-        self.i_jump += 1
+        else:
+            self.record_target_contact.append(np.zeros((self.next_cnt_to_record * 4, 3)))
+            self.record_target_contact_id.append(np.zeros((self.next_cnt_to_record * 4)))
+            
 
     def _append_and_save(self, skip_first, skip_last):
         """ 
@@ -102,10 +100,10 @@ class JumpDataRecorder(DataRecorderAbstract):
                 
                 data = np.load(self.saving_file_path)
                 if data.keys():
-                    record_state = data[JumpDataRecorder.STATE_NAME]
-                    record_feet_contact = data[JumpDataRecorder.CONTACT_NAME]
-                    record_target_contact = data[JumpDataRecorder.TARGET_NAME]
-                    record_target_contact_id = data[JumpDataRecorder.TARGET_ID_NAME]
+                    record_state = data[ContactsDataRecorder.STATE_NAME]
+                    record_feet_contact = data[ContactsDataRecorder.CONTACT_NAME]
+                    record_target_contact = data[ContactsDataRecorder.TARGET_NAME]
+                    record_target_contact_id = data[ContactsDataRecorder.TARGET_ID_NAME]
                     
                     # Concatenate
                     self.record_state = np.concatenate((record_state, self.record_state), axis = 0)
@@ -115,12 +113,12 @@ class JumpDataRecorder(DataRecorderAbstract):
             
             # Save with new data / save stones position /!\ overrides it
             d = {
-                JumpDataRecorder.STATE_NAME : self.record_state,
-                JumpDataRecorder.GOAL_NAME : self.goal_locations_w,
-                JumpDataRecorder.CONTACT_NAME : self.record_feet_pos_w,
-                JumpDataRecorder.TARGET_NAME : self.record_target_contact,
-                JumpDataRecorder.TARGET_ID_NAME : self.record_target_contact_id,
-                JumpDataRecorder.STONES_NAME : self.stepping_stones.positions,
+                ContactsDataRecorder.STATE_NAME : self.record_state,
+                ContactsDataRecorder.GOAL_NAME : self.goal_locations_w,
+                ContactsDataRecorder.CONTACT_NAME : self.record_feet_pos_w,
+                ContactsDataRecorder.TARGET_NAME : self.record_target_contact,
+                ContactsDataRecorder.TARGET_ID_NAME : self.record_target_contact_id,
+                ContactsDataRecorder.STONES_NAME : self.stepping_stones.positions,
             }
             np.savez(self.saving_file_path, **d)
             
@@ -155,12 +153,11 @@ class JumpDataRecorder(DataRecorderAbstract):
 
         return first_count, last_count
 
-    
     def save(self, lock = None) -> None:
+        # Avoid too much repetitions in the dataset
         first_count, last_count = self.count_repeat()
-
         skip_first = max(0, first_count - 1)
-        skip_last = max(0, last_count - 2)
+        skip_last = max(0, last_count - 1)
         
         if lock:
             with lock:
@@ -169,77 +166,3 @@ class JumpDataRecorder(DataRecorderAbstract):
             self._append_and_save(skip_first, skip_last)
 
         self.reset()
-        
-
-import pybullet 
-import multiprocessing
-import tqdm
-
-from py_pin_wrapper.abstract.robot import SoloRobotWrapper
-from mpc_controller.bicon_mpc import BiConMPC
-from mpc_controller.motions.cyclic.solo12_trot import trot
-from mpc_controller.motions.cyclic.solo12_jump import jump
-from tree_search.data_recorder import JumpDataRecorder
-from environment.simulator import SteppingStonesSimulator
-
-
-
-def record_one_environement(args):
-    path = args[0]
-    i_env = args[1]
-    
-    seed = int(time.time() * 337) % 33 + i_env
-    np.random.seed(seed)
-    
-    stepping_stones_height = 0.1
-    stones_env = SteppingStonesEnv(
-        height=stepping_stones_height,
-        randomize_height_ratio=0.3,
-        randomize_pos_ratio=0.,
-        size_ratio=(0.7, 0.7),
-        N_to_remove=0
-        )
-    
-    robot = SoloRobotWrapper(server=pybullet.DIRECT)
-
-    controller = BiConMPC(robot, height_offset=stepping_stones_height)
-    controller.set_gait_params(jump)
-    
-    data_recorder = JumpDataRecorder(robot, stones_env, f"{path}/env_{i_env}/goal_0/")
-    
-    sim = SteppingStonesSimulator(
-        stepping_stones_env=stones_env,
-        robot=robot,
-        controller=controller,
-        data_recorder=data_recorder,
-        )
-    
-    start_indices = [51, 33, 49, 31]
-    contact_plan_id = np.array([start_indices] * 20)
-    contact_plan_id = np.array([[51, 33, 49, 31], [51, 33, 49, 31], [51, 33, 49, 31], [52, 34, 50, 32], [53, 35, 51, 33]])
-        
-    # contact_plan_callback = lambda env, sim_step, q, v : desired_contact_locations_callback(env, sim_step, q, v, controller)
-    sim.run_contact_plan(contact_plan_id, use_viewer=False, verbose=False, randomize=True)
-
-
-def main():
-    """
-    Record simple dataset with one goal.
-    """
-
-    n_cores = 20
-    n_runs = 100
-    path = "../data/one_goal/train"
-    with multiprocessing.Pool(n_cores) as pool:
-        for _ in tqdm.tqdm(pool.imap_unordered(record_one_environement, [(path, i) for i in range(n_runs)]), total=n_runs):
-            pass
-        
-    n_cores = 20
-    n_runs = 20
-    path = "../data/one_goal/test"
-    with multiprocessing.Pool(n_cores) as pool:
-        for _ in tqdm.tqdm(pool.imap_unordered(record_one_environement, [(path, i) for i in range(n_runs)]), total=n_runs):
-            pass
-        
-if __name__ == "__main__":
-    main()

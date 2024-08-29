@@ -8,7 +8,7 @@ import pickle
 
 from environment.stepping_stones import SteppingStonesEnv
 from mpc_controller.bicon_mpc import BiConMPC
-from py_pin_wrapper.abstract.robot import SoloRobotWrapper
+from mj_pin_wrapper.pin_robot import PinQuadRobotWrapper
 from learning.utils.utils import get_model, get_config
 
 NORMALIZATION_STATS = "normalization_stats.pkl"
@@ -31,7 +31,7 @@ class MPC_LearnedContactPlanner(BiConMPC):
         STONES_NAME,
     ]
     def __init__(self,
-                 robot: SoloRobotWrapper,
+                 robot: PinQuadRobotWrapper,
                  stepping_stones_env: SteppingStonesEnv,
                  model_path : str = "",
                  **kwargs) -> None:
@@ -152,7 +152,7 @@ class MPC_LearnedContactPlanner(BiConMPC):
         velocity = v[:6]
 
         # Current position of the legs (x, y, z) in base frame
-        feet_pos_w = self.robot.get_foot_locations_world()
+        feet_pos_w = self.robot.get_foot_pos_world()
         feet_pos_b = self.transform_points(b_T_W, feet_pos_w).reshape(-1)
 
         # Get all box_location w.r.t to base
@@ -188,7 +188,7 @@ class MPC_LearnedContactPlanner(BiConMPC):
         if self.goal_locations is not None:
 
             # Update the contact location only when robot is in contact
-            if self.replan_contact():                
+            if self.replan_contact():
                 input = self.get_inputs(q, v)
                 input_array = torch.from_numpy(input).float().unsqueeze(0).to(self.device)
                 
@@ -200,10 +200,11 @@ class MPC_LearnedContactPlanner(BiConMPC):
                             num_inference_steps=self.diffusion_steps
                             )
                         # CDCD
-                        if hasattr(self.model.eps_model, "pointers"):
-                            outputs_b = self.model.eps_model.selected
+                        if hasattr(self.model.model, "pointers"):
+                            outputs_b = self.model.model.selected
                             #max_probs = self.model.eps_model.max_probs.squeeze().detach().numpy()
                     else:
+                        # MLP
                         outputs_b = self.model(input_array)
                         
                 outputs_b = outputs_b.cpu().numpy().reshape(8, 3)
@@ -222,26 +223,23 @@ class MPC_LearnedContactPlanner(BiConMPC):
                     # Set next 2 jumps
                     contact_plan = np.concatenate((jump1, jump2), axis=0)
                     repeat_contact_plan = np.repeat(contact_plan, self.gait_horizon, axis=0)
-                    self.full_length_contact_plan = repeat_contact_plan
-                    
                 else:
                     # Add only jump2 to the contact plan
-                    if self.replanning < 20:
-                        repeat_contact_plan = np.repeat(jump1, self.gait_horizon, axis=0)
-                    else:
-                        repeat_contact_plan = np.repeat(jump2, self.gait_horizon, axis=0)
+                    repeat_contact_plan = np.repeat(jump2, self.gait_horizon, axis=0)
                         
-                    self.full_length_contact_plan = np.concatenate(
-                        (self.full_length_contact_plan, repeat_contact_plan),
-                        axis=0)
+                self.full_length_contact_plan = np.concatenate(
+                    (self.full_length_contact_plan, repeat_contact_plan),
+                    axis=0)
                     
-            mpc_contacts_w = self.full_length_contact_plan[self.replanning:self.replanning + 2*self.gait_horizon]
+            mpc_contacts_w = self.full_length_contact_plan[self.replanning : self.replanning + self.gait_horizon]
 
             # Update the desired velocity
-            i = self.gait_horizon
-            avg_position_next_cnt = np.mean(mpc_contacts_w[i], axis=0)
-            self.v_des = np.round((avg_position_next_cnt - q[:3]) / self.gait_period, 2)
-            self.v_des *= 1.4
-            self.v_des[-1] = 0.
+            i_next_jump = -1
+            center_position_next_cnt = np.mean(self.full_length_contact_plan[i_next_jump], axis=0)
+            self.v_des = np.round((center_position_next_cnt - q[:3]) / self.gait_period, 2)
+            # Scale velocity
+            self.v_des *= np.array([1.4, 2., 0.])
+            
+            self.replanning += 1
             
         return mpc_contacts_w

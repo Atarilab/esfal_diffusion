@@ -2,73 +2,76 @@
 ## Author : Avadesh Meduri & Paarth Shah
 ## Date : 6/05/2021
 
-import copy
-import time
 import numpy as np
 import pinocchio as pin
+import copy
 from inverse_kinematics_cpp import InverseKinematics
 from biconvex_mpc_cpp import BiconvexMP, KinoDynMP
 from gait_planner_cpp import GaitPlanner
 from matplotlib import pyplot as plt
 
-from py_pin_wrapper.abstract.robot import SoloRobotWrapper
+from mj_pin_wrapper.pin_robot import PinQuadRobotWrapper
 from mpc_controller.motions.weight_abstract import BiconvexMotionParams
 
 class CyclicQuadrupedGaitGen:
     GRAVITY = 9.81
-    FOOT_SIZE = 0.008
+    DEFAULT_SIM_DT = 1.0e-3 # s
+    DEFAULT_CONTACT_OFFSET = 0.0 # m
 
     def __init__(self,
-                 robot: SoloRobotWrapper,
+                 robot: PinQuadRobotWrapper,
                  gait_params: BiconvexMotionParams,
                  planning_time: float,
-                 height_offset: float,
+                 height_offset: float = 0.,
+                 sim_dt: float = 1.0e-3,
+                 **kwargs,
                  ) -> None:
         """
-        Args:
+        Input:
             robot : robot model (pin and mujoco)
-            planning_time : planning frequency (Hz)
+            planning_time : planning frequency
             height_offset : offset the height (m)
         """
         self.planning_time = planning_time
         self.height_offset = height_offset
-        self.sim_dt = robot.config.control_period
-        # Robot pin model and data
-        self.rmodel = robot.pin_model
-        self.rdata = robot.pin_data
+        self.robot = robot
         # URDF model path
-        self.path_urdf = robot.config.urdf_path
+        self.path_urdf = robot.path_urdf
         # Foot size
-        self.foot_size = CyclicQuadrupedGaitGen.FOOT_SIZE
+        self.foot_size = robot.foot_size
+        self.sim_dt = sim_dt
+        self.cnt_offset = kwargs.get("cnt_offset", CyclicQuadrupedGaitGen.DEFAULT_CONTACT_OFFSET)
         
         # Update pin model
         q0, v0 = robot.get_state()
         self.x_reg = np.concatenate([q0, v0])
 
-        self._update_pin_data(q0, v0)
+        pin.forwardKinematics(self.robot.model, self.robot.data, q0, np.zeros(self.robot.model.nv))
+        pin.updateFramePlacements(self.robot.model, self.robot.data)
         
-        pin.crba(self.rmodel, self.rdata, q0)
-        self.I_composite_b = self.rdata.Ycrb[1].inertia
+        pin.crba(self.robot.model, self.robot.data, q0)
+        self.I_composite_b = self.robot.data.Ycrb[1].inertia
         
         # End effectors frames name and id
-        self.eeff_names = robot.endeff_names
-        self.eeff_frame_id = [self.rmodel.getFrameId(eeff_name) for eeff_name in self.eeff_names]
-        self.n_eeff = robot.nf
+        self.eeff_names = robot.foot_names
+        self.eeff_frame_id = self.robot.eeff_idx
+        self.n_eeff = robot.ne
 
         com_init = np.expand_dims(
-            pin.centerOfMass(self.rmodel, self.rdata, q0, np.zeros(self.rmodel.nv)),
+            pin.centerOfMass(self.robot.model, self.robot.data, q0, np.zeros(self.robot.model.nv)),
             0)
 
         # Offsets to center of mass in base frame
         R = pin.Quaternion(np.array(q0[3:7])).toRotationMatrix()
-        self.offsets = (robot.get_hip_locations_world() - com_init) @ R
-        
-        OFFSET = 0.03
-        #self.offsets[:, 0] += np.array([0., 0., -OFFSET, -OFFSET])
-        self.offsets[:, 1] += np.array([OFFSET, -OFFSET, OFFSET, -OFFSET])
+        self.offsets = np.round(
+            ((robot.get_thigh_pos_world() - com_init) @ R),
+            3)
+
+        self.offsets[:, 0] += np.array([-self.cnt_offset, -self.cnt_offset, self.cnt_offset, self.cnt_offset])
+        self.offsets[:, 1] += np.array([self.cnt_offset, -self.cnt_offset, self.cnt_offset, -self.cnt_offset])
         
         # --- Set up Dynamics ---
-        self.mass = pin.computeTotalMass(self.rmodel)
+        self.mass = pin.computeTotalMass(self.robot.model)
 
         # For plotting
         self.com_traj = []
@@ -83,7 +86,6 @@ class CyclicQuadrupedGaitGen:
         
         # To be compatible with old code
         self.height_map = None
-        
 
     def update_gait_params(self, weight_abstract, ik_hor_ratio = 0.5):
         """
@@ -116,22 +118,26 @@ class CyclicQuadrupedGaitGen:
         self.mp.set_rho(self.params.rho)
 
         # Set up constraints for Dynamics
-        self.bx, self.by, self.bz = self.params.dyn_bound[0], self.params.dyn_bound[1], self.params.dyn_bound[2]
-        self.params.f_max *= self.mass * CyclicQuadrupedGaitGen.GRAVITY
-        self.fx_max, self.fy_max, self.fz_max = self.params.f_max[0], self.params.f_max[1], self.params.f_max[2]
-
+        self.bx, self.by, self.bz = (self.params.dyn_bound[0],
+                                     self.params.dyn_bound[1],
+                                     self.params.dyn_bound[2])
+        
+        self.fx_max, self.fy_max, self.fz_max = np.split(
+            self.params.f_max * self.mass * CyclicQuadrupedGaitGen.GRAVITY,
+            3)
+        
         # --- Set up other variables ---        
         self.X_nom = np.zeros((9*self.horizon))
 
         # For interpolation (should be moved to the controller)
-        self.size = min(self.ik_horizon, int(self.planning_time/self.params.gait_dt) + 2)
+        self.size = min(self.ik_horizon, int(self.planning_time/self.params.gait_dt))
         if self.planning_time > self.params.gait_dt:
             self.size -= 1
 
     def create_cnt_plan(self, q, v, t, v_des, w_des):
         
-        com = np.round(pin.centerOfMass(self.rmodel, self.rdata, q, v)[0:2], 3)
-        z_height = pin.centerOfMass(self.rmodel, self.rdata, q, v)[2]
+        com = np.round(pin.centerOfMass(self.robot.model, self.robot.data, q, v)[0:2], 3)
+        z_height = pin.centerOfMass(self.robot.model, self.robot.data, q, v)[2]
         #vcom = np.round(v[0:3], 3)
 
         vtrack = v_des[0:2] # this effects the step location (if set to vcom it becomes raibert)
@@ -162,13 +168,12 @@ class CyclicQuadrupedGaitGen:
                     # Contact
                     if self.gait_planner.get_phase(t, j) == 1:
                         self.cnt_plan[i][j][0] = 1
-                        self.cnt_plan[i][j][1:4] = np.round(self.rdata.oMf[self.eeff_frame_id[j]].translation, 3)
+                        self.cnt_plan[i][j][1:4] = np.round(self.robot.data.oMf[self.eeff_frame_id[j]].translation, 3)
 
                     # No contact
                     else:
                         self.cnt_plan[i][j][0] = 0
-                        self.cnt_plan[i][j][1:4] = np.round(self.rdata.oMf[self.eeff_frame_id[j]].translation, 3)
-                
+                        self.cnt_plan[i][j][1:4] = np.round(self.robot.data.oMf[self.eeff_frame_id[j]].translation, 3)
                 # Other time steps
                 else:
                     ft = np.round(t + i*self.params.gait_dt, 3)
@@ -230,10 +235,10 @@ class CyclicQuadrupedGaitGen:
             self.dt_arr[i] = dt
             
     def compute_raibert_contact_plan(self, q, v, t, v_des, w_des):
-        self._update_pin_data(q, v)
+        self.robot.update(q, v)
 
-        com = np.round(pin.centerOfMass(self.rmodel, self.rdata, q, v)[0:2], 3)
-        z_height = pin.centerOfMass(self.rmodel, self.rdata, q, v)[2] - self.height_offset
+        com = np.round(pin.centerOfMass(self.robot.model, self.robot.data, q, v)[0:2], 3)
+        z_height = pin.centerOfMass(self.robot.model, self.robot.data, q, v)[2] - self.height_offset
         #vcom = np.round(v[0:3], 3)
 
         vtrack = v_des[0:2] # this effects the step location (if set to vcom it becomes raibert)
@@ -265,7 +270,7 @@ class CyclicQuadrupedGaitGen:
                 # First time step
                 if i == 0:
                     # Contact
-                    foot_loc_w = self.rdata.oMf[self.eeff_frame_id[j]].translation
+                    foot_loc_w = self.robot.data.oMf[self.eeff_frame_id[j]].translation
                     if self.gait_planner.get_phase(t, j) == 1:
                         cnt_plan[i][j][0] = 1
                         cnt_plan[i][j][1:4] = b_T_W * foot_loc_w
@@ -364,23 +369,21 @@ class CyclicQuadrupedGaitGen:
         # If custom contact plan is given
         if len(cnt_plan_des_world) >= self.horizon:
             for i in range(self.horizon):
+                
+                if i == 0:
+                    foot_pos_0 = self.robot.get_foot_pos_world()
+                    
                 for j in range(self.n_eeff):
                     b_pos_contact = b_T_W * cnt_plan_des_world[i][j]
                     b_pos_contact[-1] = cnt_plan_des_world[i][j][-1] + self.foot_size
-                    b_pos_next_contact = b_T_W * cnt_plan_des_world[self.horizon // 2 - 1][j]
-                    
+                    b_pos_next_contact = b_T_W * cnt_plan_des_world[self.horizon // 2][j]
+                
                     # First time step
                     if i == 0:
-                        # Contact
-                        if self.gait_planner.get_phase(time, j) == 1:
-                            self.cnt_plan[i][j][0] = 1
-                            self.cnt_plan[i][j][1:4] = self.rdata.oMf[self.eeff_frame_id[j]].translation
+                        self.cnt_plan[i][j][1:4] = foot_pos_0[j]
+                        cnt = self.gait_planner.get_phase(time, j)
+                        self.cnt_plan[i][j][0] = cnt
 
-                        # No contact
-                        else:
-                            self.cnt_plan[i][j][0] = 0
-                            self.cnt_plan[i][j][1:4] = self.rdata.oMf[self.eeff_frame_id[j]].translation
-                        
                     # Next time steps
                     else:
                         ft = time + i * self.params.gait_dt
@@ -404,10 +407,10 @@ class CyclicQuadrupedGaitGen:
                             phase_percent = self.gait_planner.get_percent_in_phase(ft, j)
                             self.swing_time[i][j] = 1
                             # From current to next contact
-                            self.cnt_plan[i][j][1:3] +=  (b_pos_next_contact - b_pos_contact)[:2] * (phase_percent)
-                            # Swnig height is a parabola
-                            self.cnt_plan[i][j][-1] += (self.params.step_ht) * (1. - (phase_percent - 0.45) ** 2)
-                            
+                            self.cnt_plan[i][j][1:3] +=  (b_pos_next_contact - b_pos_contact)[:2] * (phase_percent + 0.2)
+                            # Swing height is a parabola
+                            self.cnt_plan[i][j][-1] += (self.params.step_ht) * (1. - abs(phase_percent - 0.4))
+                
                 if i == 0:
                     dt = self.params.gait_dt - np.round(np.remainder(time,self.params.gait_dt),2)
                     if dt == 0:
@@ -440,10 +443,10 @@ class CyclicQuadrupedGaitGen:
                                                               "via_" + str(0) + self.eeff_names[j], i)
         
         self.ik.add_state_regularization_cost(0, self.ik_horizon, self.params.reg_wt[0], "xReg", self.params.state_wt, self.x_reg, False)
-        self.ik.add_ctrl_regularization_cost(0, self.ik_horizon, self.params.reg_wt[1], "uReg", self.params.ctrl_wt, np.zeros(self.rmodel.nv), False)
+        self.ik.add_ctrl_regularization_cost(0, self.ik_horizon, self.params.reg_wt[1], "uReg", self.params.ctrl_wt, np.zeros(self.robot.nv), False)
 
         self.ik.add_state_regularization_cost(0, self.ik_horizon, self.params.reg_wt[0], "xReg", self.params.state_wt, self.x_reg, True)
-        self.ik.add_ctrl_regularization_cost(0, self.ik_horizon, self.params.reg_wt[1], "uReg", self.params.ctrl_wt, np.zeros(self.rmodel.nv), True)
+        self.ik.add_ctrl_regularization_cost(0, self.ik_horizon, self.params.reg_wt[1], "uReg", self.params.ctrl_wt, np.zeros(self.robot.nv), True)
 
         self.ik.setup_costs(self.dt_arr[0:self.ik_horizon])
 
@@ -452,9 +455,9 @@ class CyclicQuadrupedGaitGen:
         # initial and terminal state
         self.X_init = np.zeros(9)
         X_ter = np.zeros_like(self.X_init)
-        pin.computeCentroidalMomentum(self.rmodel, self.rdata)
-        self.X_init[0:3] = pin.centerOfMass(self.rmodel, self.rdata, q.copy(), v.copy())
-        self.X_init[3:] = np.array(self.rdata.hg)
+        pin.computeCentroidalMomentum(self.robot.model, self.robot.data)
+        self.X_init[0:3] = pin.centerOfMass(self.robot.model, self.robot.data, q.copy(), v.copy())
+        self.X_init[3:] = np.array(self.robot.data.hg)
         self.X_init[3:6] /= self.mass
 
         self.X_nom[0::9] = self.X_init[0]
@@ -514,32 +517,28 @@ class CyclicQuadrupedGaitGen:
 
         return omega
     
-    def _update_pin_data(self, q, v):
-        pin.framesForwardKinematics(self.rmodel, self.rdata, q)
-        
     def optimize(self, q, v, t, v_des, w_des, cnt_plan_des=[], X_wm = None, F_wm = None, P_wm = None):
 
         q_origin = copy.deepcopy(q)
         q_origin[:2] = 0.
-        
         if w_des != 0:
             ori_des = q[3:7]
         else:
             ori_des = np.array([0., 0., 0., 1.])
 
-        self._update_pin_data(q_origin, v)
+        self.robot.update(q_origin, v)
         
         if len(cnt_plan_des) == 0:
             self.create_cnt_plan(q_origin, v, t, v_des, w_des)
         else:
             self.follow_contact_plan(q, t, cnt_plan_des)
-            
+
         # Creates costs for IK and Dynamics
         self.create_costs(q_origin, v, v_des, w_des, ori_des)
 
         # pinocchio complains otherwise 
-        q = pin.normalize(self.rmodel, q_origin)
-        self.kd.optimize(q_origin, v, 100, 1)
+        q = pin.normalize(self.robot.model, q_origin)
+        self.kd.optimize(q_origin, v, 75, 1)
 
         # Results
         #com_opt = self.mp.return_opt_com()
@@ -552,11 +551,11 @@ class CyclicQuadrupedGaitGen:
         step_dt = int(self.dt_arr[0]/self.sim_dt)
         if not hasattr(self, "f_int"):
             self.f_int = np.empty((self.size * step_dt, n_eff_3d), dtype=np.float32)
-            self.xs_int = np.empty((self.size * step_dt, self.rmodel.nv + self.rmodel.nq), dtype=np.float32)
+            self.xs_int = np.empty((self.size * step_dt, self.robot.model.nv + self.robot.model.nq), dtype=np.float32)
             self.us_int = np.empty((self.size * step_dt, len(us[0])), dtype=np.float32)
             #self.com_int = np.empty((self.size * step_dt, len(com_opt[0, :])), dtype=np.float32)
             #self.mom_int = np.empty((self.size * step_dt, len(mom_opt[0, :])), dtype=np.float32)
-        
+
         for i in range(self.size):
             self.f_int[i * step_dt : (i+1) * step_dt, :] =  np.linspace(F_opt[i*n_eff_3d:n_eff_3d*(i+1)], F_opt[n_eff_3d*(i+1):n_eff_3d*(i+2)], step_dt, dtype=np.float32)
             self.xs_int[i * step_dt : (i+1) * step_dt, :] =  np.linspace(xs[i], xs[i+1], step_dt, dtype=np.float32)
@@ -576,7 +575,7 @@ class CyclicQuadrupedGaitGen:
         optimized_forces = self.mp.return_opt_f()
         ik_com_opt = self.ik.return_opt_com()
         ik_mom_opt = self.ik.return_opt_mom()
-        com = pin.centerOfMass(self.rmodel, self.rdata, q.copy(), v.copy())
+        com = pin.centerOfMass(self.robot.model, self.robot.data, q.copy(), v.copy())
 
         # Plot Center of Mass
         fig, ax = plt.subplots(3,1)
@@ -645,7 +644,7 @@ class CyclicQuadrupedGaitGen:
 
     def plot_joints(self):
         self.xs_traj = np.array(self.xs_traj)
-        self.xs_traj = self.xs_traj[:,:,:self.rmodel.nq]
+        self.xs_traj = self.xs_traj[:,:,:self.robot.model.nq]
         self.q_traj = np.array(self.q_traj)
         x = self.dt*np.arange(0, len(self.xs_traj[1]) + len(self.xs_traj), 1)
         # com plots
@@ -682,7 +681,7 @@ class CyclicQuadrupedGaitGen:
         F_opt = self.mp.return_opt_f()
         ik_com_opt = self.ik.return_opt_com()
         ik_mom_opt = self.ik.return_opt_mom()
-        com = pin.centerOfMass(self.rmodel, self.rdata, q.copy(), v.copy())
+        com = pin.centerOfMass(self.robot.model, self.robot.data, q.copy(), v.copy())
 
         # Plot Center of Mass
         fig, ax = plt.subplots(3,1)

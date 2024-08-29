@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import Any, List, Tuple
 from numpy.core.multiarray import array as array
 import pinocchio
 import numpy as np
@@ -7,7 +7,7 @@ from numpy.linalg import norm
 from multiprocessing import Pool
 from scipy.linalg import solve 
 
-from py_pin_wrapper.abstract.robot import SoloRobotWrapper
+from mj_pin_wrapper.mj_robot import MJQuadRobotWrapper
         
 class QuadrupedKinematicFeasibility():
     # Greedy parameters for IK solver
@@ -29,7 +29,7 @@ class QuadrupedKinematicFeasibility():
     for a quadruped robot.
     """
     def __init__(self,
-                 robot: SoloRobotWrapper,
+                 robot: MJQuadRobotWrapper,
                  num_threads: int = -1,
                  **kwargs) -> None:
         self.robot = robot
@@ -89,7 +89,7 @@ class QuadrupedKinematicFeasibility():
         self.robot.reset_state(q_neutral)
         
         # We assume legs are straight in neutral position
-        feet_position_world = self.robot.get_foot_locations_world()
+        feet_position_world = self.robot.get_foot_pos_world()
         max_reach = np.linalg.norm(feet_position_world, axis=-1).max()
         
         # reset robot
@@ -136,27 +136,49 @@ class QuadrupedKinematicFeasibility():
         return feasible
     
     @staticmethod
-    def reachable_locations(current_location: np.array,
-                            foot_pos: np.ndarray,
-                            max_dist: float = 0.4,
+    def reachable_locations(center_location: np.array,
+                            available_locations: np.ndarray,
+                            max_center_dist : float | Tuple[float, float],
                             ) -> np.ndarray:
         """
-        Returns contact locations reachable by the robot.
+        Returns contact locations reachable from a given
+        center_locations among the available_locations.
 
         Args:
-            - current_location (np.ndarray): Current base location in world. Shape [3]
-            - feet_pos (np.ndarray): Feet positions as array. Shape [N, 3]
-            - scale_reach (foat): Scale the reach of the robot to prune distant locations.
+            - center_location (np.ndarray): Position in world frame. Shape [3]
+            - available_locations (np.ndarray): Possible available contact locations in world. Shape [N, 3]
+            - max_center_dist (foat or Tuple[float, float]):
+            if float:
+                Prune available locations that are at a distance further than max_center_dist.
+            if Tuple:
+                Prune available locations that not in the ellipse of semi axis
+                max_center_dist[0] and max_center_dist[1]
 
         Returns:
             np.ndarray: Index of the reachable foot positions. Shape [Nr]
         """
         # Compute distance to center of the feet
-        feet_pos_centered = foot_pos - current_location[np.newaxis, :]        # [N, 3]
-        distance_center_to_feet = np.linalg.norm(feet_pos_centered, axis=-1)  # [N, 1]
-        
-        # True if a foot if reachable
-        reachable = distance_center_to_feet < max_dist
+        feet_pos_centered = available_locations - center_location[np.newaxis, :]        # [N, 3]
+
+        if isinstance(max_center_dist, float):
+            max_center_dist_x, max_center_dist_y = max_center_dist, max_center_dist
+        elif (isinstance(max_center_dist, tuple) or
+              isinstance(max_center_dist, list)):
+            max_center_dist_x, max_center_dist_y = max_center_dist
+        else:
+            max_center_dist_x, max_center_dist_y = 0., 0.
+
+        if max_center_dist_x * max_center_dist_y != 0:
+            # Calculate the normalized coordinates
+            normalized_x = feet_pos_centered[:, 0] / max_center_dist_x
+            normalized_y = feet_pos_centered[:, 1] / max_center_dist_y
+
+            # Check if the points are within the ellipse
+            reachable = (normalized_x**2 + normalized_y**2) <= 1
+        else:
+            distance_center_to_feet = np.linalg.norm(feet_pos_centered, axis=-1)  # [N, 1]
+            # True if a foot if reachable
+            reachable = distance_center_to_feet < max_center_dist
 
         # Reachable contact locations index
         reachable_id = np.nonzero(reachable)[0]
@@ -212,7 +234,7 @@ class QuadrupedKinematicFeasibility():
         check2 = (ccw_ABD != ccw_CBD) & (ccw_ACB != ccw_ACD)
 
         # Check if A, B, C or D are not at the same locations
-        non_zero = lambda a : np.sum(a, axis=-1) != 0.
+        non_zero = lambda a : np.any(a != 0., axis=-1)
         id_different_locations = (
             non_zero(D_A) &
             non_zero(D_B) &

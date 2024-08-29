@@ -1,25 +1,30 @@
-import pybullet as p
-import numpy as np
+import mujoco
+import mujoco.viewer
 import pinocchio as pin
-from bullet_utils.env import BulletEnv
+import numpy as np
 
-# Constants (set these values accordingly)
-UPDATE_VISUALS_STEPS = 10
-N_NEXT_CONTACTS = 5
-FEET_COLORS = [[1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1], [1, 1, 0, 1]]
-SPHERE_RADIUS = 0.015
+from mj_pin_wrapper.abstract.controller import ControllerAbstract
+from mujoco._structs import MjData
 
-def desired_contact_locations_callback(env: BulletEnv, sim_step: int, q: np.ndarray, v: np.ndarray, controller) -> None:
-    """
-    Visualize desired contact locations in PyBullet.
-
-    Args:
-        sim_step (int): Simulation step.
-        q (np.ndarray): Robot state.
-        v (np.ndarray): Robot velocity.
-        controller: Controller with gait generation capabilities.
-    """
-    if sim_step % UPDATE_VISUALS_STEPS == 0:
+UPDATE_VISUALS_STEPS = 50 # Update position every <UPDATE_VISUALS_STEPS> sim steps
+FEET_COLORS = [
+    [1., 0., 0., 1.], # FR
+    [0., 1., 0., 1.], # FL
+    [0., 0., 1., 1.], # RR
+    [1., 1., 1., 1.], # RL
+]
+N_NEXT_CONTACTS = 10
+SPHERE_RADIUS = 0.012
+    
+def desired_contact_locations_callback(viewer,
+                                       sim_step: int,
+                                       q: np.ndarray,
+                                       v: np.ndarray,
+                                       robot_data: MjData,
+                                       controller: ControllerAbstract) -> None:
+    
+    if sim_step % UPDATE_VISUALS_STEPS == 0: 
+        
         # Next contacts in base frame (except height in world frame)
         horizon_step = controller.gait_gen.horizon
         contact_step = max(horizon_step // N_NEXT_CONTACTS, 1)
@@ -29,10 +34,9 @@ def desired_contact_locations_callback(env: BulletEnv, sim_step: int, q: np.ndar
         # Base transform in world frame
         W_T_B = pin.XYZQUATToSE3(q[:7])
         
-        if not hasattr(env, 'visuals'):
-            env.visuals = []
-        
+        viewer.user_scn.ngeom = 0
         for i, contacts_B in enumerate(next_contacts_B):
+            
             # Express contact in world frame
             contact_W = W_T_B * contacts_B
             contact_W[-1] = contacts_B[-1]
@@ -40,76 +44,36 @@ def desired_contact_locations_callback(env: BulletEnv, sim_step: int, q: np.ndar
             
             # Add visuals
             color = FEET_COLORS[i % len(FEET_COLORS)]
-            color[-1] = 0.4 if i > 4 else 1.
-            size = SPHERE_RADIUS if i < 4 else SPHERE_RADIUS / 2.
-            
-            if i < len(env.visuals):
-                # Move the existing visual object
-                p.resetBasePositionAndOrientation(
-                    env.visuals[i],
-                    contact_W,
-                    p.getQuaternionFromEuler([0.0, 0.0, 0.0])
-                )
-            else:
-                # Create a new visual object
-                visual_shape_id = p.createVisualShape(
-                    shapeType=p.GEOM_SPHERE,
-                    radius=size,
-                    rgbaColor=color
-                )
-                visual_body_id = p.createMultiBody(
-                    baseVisualShapeIndex=visual_shape_id,
-                    basePosition=contact_W,
-                    baseOrientation=p.getQuaternionFromEuler([0.0, 0.0, 0.0])
-                )
-                env.visuals.append(visual_body_id)
-        
-        # Remove excess visuals if any
-        for i in range(len(next_contacts_B), len(env.visuals)):
-            p.removeBody(env.visuals[i])
-        env.visuals = env.visuals[:len(next_contacts_B)]
-        
-        
+            color[-1] = (0.5 - (i // 4 / (horizon_step)) + 0.5)
+            size = SPHERE_RADIUS * (0.7 - (i // 4 / (horizon_step)) + 0.3)
 
-def position_3d_callback(env: BulletEnv, positions_W: np.ndarray) -> None:
-    """
-    Visualize positions in PyBullet.
-
-    Args:
-        controller: Controller with visuals attribute.
-        positions_W (np.ndarray): Array of 3D positions in world coordinates.
-    """
-    if not hasattr(env, 'visuals'):
-        env.visuals = []
+            mujoco.mjv_initGeom(
+                viewer.user_scn.geoms[i],
+                type=mujoco.mjtGeom.mjGEOM_SPHERE,
+                size=[size, 0, 0],
+                pos=contact_W,
+                mat=np.eye(3).flatten(),
+                rgba=color,
+            )
+        viewer.user_scn.ngeom = i + 1
+        
+        
+def position_3d_callback(viewer, positions_W: np.ndarray) -> None:
     
+    viewer.user_scn.ngeom = 0
     for i, pos in enumerate(positions_W):
+
         # Add visuals
         color = FEET_COLORS[i % len(FEET_COLORS)]
         color[-1] = 0.4 if i > 4 else 1.
         size = SPHERE_RADIUS if i < 4 else SPHERE_RADIUS / 2.
         
-        if i < len(env.visuals):
-            # Move the existing visual object
-            p.resetBasePositionAndOrientation(
-                env.visuals[i],
-                pos,
-                p.getQuaternionFromEuler([0.0, 0.0, 0.0])
-            )
-        else:
-            # Create a new visual object
-            visual_shape_id = p.createVisualShape(
-                shapeType=p.GEOM_SPHERE,
-                radius=size,
-                rgbaColor=color
-            )
-            visual_body_id = p.createMultiBody(
-                baseVisualShapeIndex=visual_shape_id,
-                basePosition=pos,
-                baseOrientation=p.getQuaternionFromEuler([0.0, 0.0, 0.0])
-            )
-            env.visuals.append(visual_body_id)
-    
-    # Remove excess visuals if any
-    for i in range(len(positions_W), len(env.visuals)):
-        p.removeBody(env.visuals[i])
-    env.visuals = env.visuals[:len(positions_W)]
+        mujoco.mjv_initGeom(
+            viewer.user_scn.geoms[i],
+            type=mujoco.mjtGeom.mjGEOM_SPHERE,
+            size=[size, 0, 0],
+            pos=pos,
+            mat=np.eye(3).flatten(),
+            rgba=color,
+        )
+    viewer.user_scn.ngeom = i + 1

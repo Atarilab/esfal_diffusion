@@ -6,12 +6,9 @@ import numpy as np
 import pinocchio as pin
 import time
 
-arr = lambda a: np.array(a).reshape(-1)
-mat = lambda a: np.matrix(a).reshape((-1, 1))
-
 class InverseDynamicsController():
 
-    def __init__(self, pin_robot, eff_arr, pinModel = None, pinData = None, real_robot = False):
+    def __init__(self, robot, eff_arr, pinModel = None, pinData = None, real_robot = False):
         """
         Input:
             robot : robot object returned by pinocchio wrapper
@@ -19,7 +16,7 @@ class InverseDynamicsController():
             real_robot : bool true if controller running on real robot
         """
         if pinModel == None:
-            self.pin_robot = pin_robot
+            self.pin_robot = robot
             self.pinModel = self.pin_robot.model
             self.pinData = self.pin_robot.data
             self.nq = self.pin_robot.nq
@@ -54,9 +51,9 @@ class InverseDynamicsController():
         """
         return np.reshape(pin.rnea(self.pinModel, self.pinData, q, v, a), (self.nv,))
 
-    def id_joint_torques(self, q, dq, des_q, des_v, des_a, fff, cnt_array):
+    def id_joint_torques(self, q, dq, des_q, des_v, des_a, fff):
         """
-        This function computes the input torques with gains
+        Compute the input torques with gains.
         Input:
             q : joint positions
             dq : joint velocity
@@ -64,25 +61,27 @@ class InverseDynamicsController():
             des_v : desired joint velocities
             des_a : desired joint accelerations
             fff : desired feed forward force
-            cnt_array
         """
         assert len(q) == self.nq
-        self.J_arr = []
 
+        # Compute inverse dynamics torques
         tau_id = self.compute_id_torques(des_q, des_v, des_a)
 
-        ## creating QP matrices
-        N = int(len(self.eff_arr))
+        # Initialize effective torque array
         tau_eff = np.zeros(self.nv)
 
-        for j in range(N):
-            self.J_arr.append(pin.computeFrameJacobian(self.pinModel, self.pinData, des_q,\
-                     self.pinModel.getFrameId(self.eff_arr[j]), pin.LOCAL_WORLD_ALIGNED).T)
-            tau_eff += np.matmul(self.J_arr[j], np.hstack((fff[j*3:(j+1)*3], np.zeros(3))))
+        # Precompute zero velocity part for feedforward force application
+        zero_velocity = np.zeros(3)
 
+        for eff_id, f in zip(self.eff_arr, fff.reshape(-1, 3)):
+            # Compute Jacobian transpose for the current end-effector
+            J = pin.computeFrameJacobian(self.pinModel, self.pinData, des_q,
+                                        eff_id, pin.LOCAL_WORLD_ALIGNED).T
+            # Compute and accumulate the effective torques
+            tau_eff += np.matmul(J, np.hstack((f, zero_velocity)))
+
+        # Calculate joint space control torques
         tau = (tau_id - tau_eff)[6:]
+        tau_gain = -self.kp * (q[7:] - des_q[7:]) - self.kd * (dq[6:] - des_v[6:])
 
-        tau_gain = -self.kp*(np.subtract(q[7:].T, des_q[7:].T)) - self.kd*(np.subtract(dq[6:].T, des_v[6:].T))
-
-        return tau + tau_gain.T
-
+        return tau + tau_gain

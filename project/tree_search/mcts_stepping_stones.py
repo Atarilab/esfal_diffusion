@@ -1,7 +1,7 @@
 import os
 import time
 import numpy as np
-from typing import List
+from typing import List, Tuple
 from itertools import product
 import pickle
 
@@ -27,19 +27,22 @@ class MCTSSteppingStonesKin(MCTS):
                  C: float = np.sqrt(2),
                  W: float = 10.,
                  alpha_exploration: float = 0.0,
-                 max_step_size: float = 0.24,
+                 max_step_size: float | Tuple[float, float] = 0.24,
                  **kwargs,
                  ) -> None:
         
         self.sim = stepping_stones_sim
         self.alpha_exploration = alpha_exploration
-        self.max_step_size = max_step_size
+        if isinstance(max_step_size, float):
+            self.max_step_size_x, self.max_step_size_y = max_step_size, max_step_size * 0.65
+        if isinstance(max_step_size, tuple):
+            self.max_step_size_x, self.max_step_size_y = max_step_size, max_step_size
         self.C = C
         self.W = W
         
         optional_args = {
             "max_depth_selection" : 15,
-            "max_solution_search" : 5,
+            "max_solution_search" : 1,
             "max_trials_nmpc" : 50,
         }
         optional_args.update(kwargs)
@@ -137,20 +140,35 @@ class MCTSSteppingStonesKin(MCTS):
         feet_pos_w = self.sim.stepping_stones.positions[state]
 
         # Shape [Nr, 4]
+        max_x, max_y = self.sim.stepping_stones.spacing
+        scale = 1.1 + self.sim.stepping_stones.randomize_pos_ratio / 2.
         possible_contact_id = [
             QuadrupedKinematicFeasibility.reachable_locations(
                 foot_pos,
                 self.sim.stepping_stones.positions,
-                max_dist=self.max_step_size
+                max_center_dist=(max_x * scale, max_y * scale),
             ) for foot_pos in feet_pos_w]
 
         # Combination of feet location [NComb, 4]
-        possible_states = np.array(list(product(*possible_contact_id)), dtype=np.int8)
+        all_states_id = np.array(list(product(*possible_contact_id)), dtype=np.int8)
+        all_states_w = self.sim.stepping_stones.positions[all_states_id]
 
-        # Bool array [NComb]
-        reachable = QuadrupedKinematicFeasibility.check_cross_legs(self.sim.stepping_stones.positions[possible_states])
+        # Prune feet contacts set that have a too high average displacement
+        center_feet = np.mean(feet_pos_w, axis=0)
+        center_possible_states = np.mean(all_states_w, axis=1)
+        reachable = QuadrupedKinematicFeasibility.reachable_locations(
+            center_feet,
+            center_possible_states,
+            max_center_dist=(self.max_step_size_x, self.max_step_size_y)
+        )
         
-        legal_next_states = possible_states[reachable]
+        # Prune state that have crossing legs
+        valid_states_id = all_states_id[reachable]
+        valid_states_w = all_states_w[reachable]
+        not_crossing = QuadrupedKinematicFeasibility.check_cross_legs(valid_states_w)
+        
+        legal_next_states = valid_states_id[not_crossing]
+        # Take only the nodes with best heuristic (in direction of the goal) to speed up the search.
         legal_next_states_sorted = self.sort_heuristic(legal_next_states, self.state_goal, len(legal_next_states) // 3)
         
         return legal_next_states_sorted
@@ -159,7 +177,7 @@ class MCTSSteppingStonesKin(MCTS):
                contact_plan: List[np.ndarray],
                goal_state: State,
                ) -> float:
-        
+        # If goal not reach: distance to goal
         if not np.array_equal(contact_plan[-1], goal_state):
             avg_d_goal = MCTSSteppingStonesKin.avg_dist_to_goal(
                 self.sim.stepping_stones.positions,
@@ -168,17 +186,22 @@ class MCTSSteppingStonesKin(MCTS):
             )[0]
             return self.f(1 - avg_d_goal / self.d_max)
         
-        goal_reached = self.W * self.sim.run_contact_plan(contact_plan)
+        # If goal reach: dynamic feasibility
+        goal_reached = self.W * self.sim.run_contact_plan(contact_plan, verbose=False, use_viewer=False, real_time=False)
         self.nmpc_sim_count += 1
         
-        # Stop simulation in case of too many trials (bugs)
-        if self.nmpc_sim_count >= self.max_trials_nmpc:
+        # Stop simulation in case of too many trials (unfeasible)
+        if (self.max_trials_nmpc > 0 and
+            self.nmpc_sim_count >= self.max_trials_nmpc):
             self.max_solution_search = -1
             
         return goal_reached
     
     @staticmethod
-    def extend_contact_plan(contact_plan, n_repeat: int = 0):
+    def repeat_first_contact_plan(contact_plan, n_repeat: int = 0):
+        """
+        Repeat first jump of a contact plan.
+        """
         contact_plan_ext = [contact_plan[0]] * n_repeat + contact_plan
         return contact_plan_ext
 
@@ -199,7 +222,7 @@ class MCTSSteppingStonesKin(MCTS):
                 break
             
         contact_plan = self.tree.current_search_path + simulation_path
-        contact_plan = self.extend_contact_plan(contact_plan, 2)
+        contact_plan = self.repeat_first_contact_plan(contact_plan, 2)
         
         reward = self.reward(contact_plan, goal_state)
         solution_found = reward >= 1
@@ -220,6 +243,13 @@ class MCTSSteppingStonesKin(MCTS):
         super().search(self.state_start, self.state_goal, num_iterations)
     
     def _record_search_performance(self, contact_plan) -> None:
+        """
+        Save search performance in a dict {perf name : [perf for each solutions found]}
+        - Time to jth solution found
+        - Iteration jth first solution found
+        - MPC simulation to jth solution found
+        - contact plan found of the jth solution found
+        """
         # Record timings when 1st solution is found
         current_time = time.time()
         time_to_find_solution = (
@@ -248,64 +278,3 @@ class MCTSSteppingStonesKin(MCTS):
         # Saving a dictionary to a Pickle file
         with open(file_path, 'wb') as f:
             pickle.dump(self.performance, f)
-        
-if __name__ == "__main__":
-    
-    
-    from py_pin_wrapper.abstract.robot import SoloRobotWrapper
-    from mpc_controller.bicon_mpc import BiConMPC
-    from environment.stepping_stones import SteppingStonesEnv
-    from mpc_controller.motions.cyclic.solo12_trot import trot
-    from mpc_controller.motions.cyclic.solo12_jump import jump
-    from utils.rendering import desired_contact_locations_callback
-    from tree_search.data_recorder import JumpDataRecorder
-    
-    stepping_stones_height = 0.1
-    stones_env = SteppingStonesEnv(
-        height=stepping_stones_height,
-        randomize_height_ratio=0.25,
-        randomize_pos_ratio=0.45,
-        size_ratio=(0.6, 0.6),
-        N_to_remove=9
-        )
-    
-    robot = SoloRobotWrapper()
-
-    controller = BiConMPC(robot, height_offset=stepping_stones_height)
-    controller.set_gait_params(trot)
-    
-    data_recorder = JumpDataRecorder(robot, stones_env, "test")
-    
-    sim = SteppingStonesSimulator(
-        stepping_stones_env=stones_env,
-        robot=robot,
-        controller=controller,
-        data_recorder=data_recorder,
-        )
-    
-    mcts = MCTSSteppingStonesKin(
-        sim,
-        simulation_steps=1,
-        C=1.0e-2,
-        W=1.,
-        alpha_exploration=0.0,
-        max_solution_search=1,
-        max_step_size=0.23
-        )
-    
-    sim.set_start_and_goal()
-    mcts.search()
-    
-    if len(mcts.all_solutions) > 0:
-        contact_plan = mcts.all_solutions[0]
-        
-        contact_plan_callback = lambda env, sim_step, q, v : desired_contact_locations_callback(env, sim_step, q, v, controller)
-        success = -1
-        while success < 0:
-            success = sim.run_contact_plan(
-                contact_plan,
-                use_viewer=True,
-                visual_callback_fn=contact_plan_callback,
-                randomize=True,
-                )
-            print("Success:", success)

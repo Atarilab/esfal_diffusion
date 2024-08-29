@@ -4,13 +4,13 @@ from typing import Tuple
 
 class SteppingStonesEnv:
     DEFAULT_FILE_NAME = "env_desc.npz"
-    DEFAULT_STONE_SHAPE = "box"               # box or cylinder
-    DEFAULT_STONE_HEIGHT = 0.1                # m
+    DEFAULT_STONE_SHAPE = "cylinder"  # box or cylinder
+    DEFAULT_STONE_HEIGHT = 0.1 # m
     
     def __init__(self,
                  grid_size: Tuple[int, int] = (9, 9),
-                 spacing: Tuple[float, float] = (0.19, 0.147),
-                 size_ratio: Tuple[float, float] = (0.75, 0.75),
+                 spacing: Tuple[float, float] = (0.19, 0.13),
+                 size_ratio: Tuple[float, float] = (0.65, 0.65),
                  randomize_pos_ratio: float = 0.,
                  randomize_height_ratio: float = 0.,
                  N_to_remove: int = 0,
@@ -94,8 +94,8 @@ class SteppingStonesEnv:
         """
         Randomize the center of the stepping stones locations.
         """
-        max_displacement_x = self.spacing[0] - self.size
-        max_displacement_y = self.spacing[1] - self.size
+        max_displacement_x = (self.spacing[0] - self.size) / 2.
+        max_displacement_y = (self.spacing[1] - self.size) / 2.
         
         dx = np.random.uniform(-1., 1., self.N) * max_displacement_x * self.randomize_pos_ratio
         dy = np.random.uniform(-1., 1., self.N) * max_displacement_y * self.randomize_pos_ratio

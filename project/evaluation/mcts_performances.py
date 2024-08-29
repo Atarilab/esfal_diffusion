@@ -1,3 +1,4 @@
+import tyro
 import numpy as np
 
 from utils.eval import PerformanceGatherer
@@ -5,7 +6,7 @@ from utils.eval import PerformanceGatherer
 
 class MCTSPerformancesEvaluation():
     def __init__(self, experiment_dir : str) -> None:
-        self.experiment_dir = experiment_dir
+        self.exp_dir = experiment_dir
         self.perfs = PerformanceGatherer(experiment_dir)
         self.data_perfs = self.perfs.data
 
@@ -82,7 +83,7 @@ class MCTSPerformancesEvaluation():
         all_contact_plan = []
         cp_length = []
         exp_env_goal_i_cp = []
-        for path, contact_plans in zip(self.perfs.get_all_run_dir(self.experiment_dir), data_contact_plan):
+        for path, contact_plans in zip(self.perfs.get_all_run_dir(self.exp_dir), data_contact_plan):
             for i_cp, cp in enumerate(contact_plans):
                 all_contact_plan.append(cp)
                 cp_length.append(len(cp))
@@ -115,8 +116,10 @@ class MCTSPerformancesEvaluation():
         print(sum(data_success), "success out of", len(data_success), "trials")
         print("Success rate", round(success_rate, 1), "%")
         
-        
+
+def main(exp_dir : str):
+    perf_evaluation = MCTSPerformancesEvaluation(exp_dir)
 
 if __name__ == "__main__":
-    experiment_dir = "/home/atari_ws/data/trot/"
-    perf_evaluation = MCTSPerformancesEvaluation(experiment_dir)
+    args = tyro.cli(main)
+    

@@ -4,11 +4,11 @@ import pinocchio as  pin
 
 from environment.stepping_stones import SteppingStonesEnv
 from mpc_controller.bicon_mpc import BiConMPC
-from py_pin_wrapper.abstract.robot import SoloRobotWrapper
+from mj_pin_wrapper.pin_robot import PinQuadRobotWrapper
 
 class MPC_RaiberContactPlanner(BiConMPC):
     def __init__(self,
-                 robot: SoloRobotWrapper,
+                 robot: PinQuadRobotWrapper,
                  stepping_stones_env: SteppingStonesEnv,
                  v_max : float = .35,
                  **kwargs) -> None:
@@ -18,25 +18,36 @@ class MPC_RaiberContactPlanner(BiConMPC):
         self.v_max = v_max
         self.i_cnt_replan = 0
 
+    @staticmethod
+    def reinitialize_controller(controller: 'BiConMPC'):
+        """
+        Reinitialize the BiConMPC controller.
+        
+        Args:
+            controller (BiConMPC): The BiConMPC controller instance to reinitialize.
+        """
+        # Store the current configuration and parameters
+        kwargs = {k: v for k, v in controller.optionals.items()}
+        robot = controller.robot
+        gait_params = controller.gait_params
+
+        # Reinitialize the controller
+        controller.__init__(robot, **kwargs)
+        
+        # Set the gait parameters again
+        controller.set_gait_params(gait_params)
+    
     def reset(self):
         """
         Reset controller.
         """
-        self.i_cnt_replan = 0
-        self.contact_plan_des = []
-        self.full_length_contact_plan = []
-        self.replanning = 0 # Replan contacts
-
-        # MPC timings parameters
-        self.sim_t = 0.0
-        self.index = 0
-        self.step = 0
-        self.pln_ctr = 0
-        self.horizon = int(self.replanning_time / self.sim_dt) # s
-
-        self.diverged = False
+        self.reinitialize_controller(self)
         
-        self.set_command()
+    def replan_contact(self) -> bool:
+        '''
+        True if contact has to be replanned
+        '''
+        return int(self.replanning % (self.gait_period // self.replanning_time)) == 0
         
     def set_goal(self, goal_id : np.ndarray) -> None:
         """ 
@@ -108,22 +119,23 @@ class MPC_RaiberContactPlanner(BiConMPC):
                     # Set next 2 jumps
                     contact_plan = np.concatenate((jump1, jump2), axis=0)
                     repeat_contact_plan = np.repeat(contact_plan, self.gait_horizon, axis=0)
-                    self.full_length_contact_plan = repeat_contact_plan
-                    
                 else:
                     # Add only jump2 to the contact plan
                     repeat_contact_plan = np.repeat(jump2, self.gait_horizon, axis=0)
-                    self.full_length_contact_plan = np.concatenate(
-                        (self.full_length_contact_plan, repeat_contact_plan),
-                        axis=0)
+                        
+                self.full_length_contact_plan = np.concatenate(
+                    (self.full_length_contact_plan, repeat_contact_plan),
+                    axis=0)
                     
-            mpc_contacts_w = self.full_length_contact_plan[self.replanning:self.replanning + 2*self.gait_horizon]
+            mpc_contacts_w = self.full_length_contact_plan[self.replanning : self.replanning + self.gait_horizon]
 
             # Update the desired velocity
-            i = self.gait_horizon
-            avg_position_next_cnt = np.mean(mpc_contacts_w[i], axis=0)
-            self.v_des = np.round((avg_position_next_cnt - q[:3]) / self.gait_period, 2)
-            self.v_des *= 1.4
-            self.v_des[-1] = 0.
+            i_next_jump = -1
+            center_position_next_cnt = np.mean(self.full_length_contact_plan[i_next_jump], axis=0)
+            self.v_des = np.round((center_position_next_cnt - q[:3]) / self.gait_period, 2)
+            # Scale velocity
+            self.v_des *= np.array([1.3, 2., 0.])
+            
+            self.replanning += 1
             
         return mpc_contacts_w
