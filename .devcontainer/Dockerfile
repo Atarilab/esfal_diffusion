@@ -33,8 +33,8 @@ RUN apt-get update && \
     libglu1-mesa-dev \
     python3-tk \
     && rm -rf /var/lib/apt/lists/* \
-    libglfw3-dev
-
+    libglfw3-dev\
+    kbd
 
 # Create a non-root user
 # Linux default main user with UID 1000
@@ -118,7 +118,7 @@ RUN echo 'export PS1="\[\e]0;\u@\h: \w\a\]${debian_chroot:+($debian_chroot)}\[\0
 RUN source /root/.bashrc
 
 # Install BiConMP
-RUN git clone --recurse-submodules -j12 https://github.com/machines-in-motion/biconvex_mpc.git
+RUN git clone --recurse-submodules -j$(nproc) https://github.com/machines-in-motion/biconvex_mpc.git
 
 COPY biconmpc_fix.py .
 RUN python3 biconmpc_fix.py
@@ -126,7 +126,7 @@ RUN rm biconmpc_fix.py
 
 RUN cd biconvex_mpc && mkdir -p build
 RUN source /root/.bashrc && cd biconvex_mpc/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/openrobots
-RUN cd biconvex_mpc/build && make install -j16
+RUN cd biconvex_mpc/build && make install -j$(nproc)
 
 RUN echo 'export PYTHONPATH=/biconvex_mpc/build:$PYTHONPATH' >> /root/.bashrc
 

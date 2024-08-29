@@ -37,6 +37,7 @@
     // "-e", "DISPLAY="
     // $DISPLAY,
     // "--env", "DISPLAY=$DISPLAY",
+    "--interactive",
     "--env", "LIBGL_ALWAYS_INDIRECT=0",
     "--net=host",
     "--ipc=host",
@@ -50,5 +51,10 @@
     ],
     // Post create command - dependency check and permission for read write for workspace folder
     // "postStartCommand": "",
-    "postAttachCommand": ". /home/atari/.bashrc"
+    "postAttachCommand": [
+        ". /home/atari/.bashrc",
+        "xhost local:root",
+        "cd project"
+          // Display with root user
+    ]
 }
