@@ -1,26 +1,26 @@
 DATA: # arguments that will be passed to get_dataloaders
-  dataset: "record_"
+  dataset: "trot_grid"
   data_dir: "/home/atari_ws/data/"
-  batch_size: 512
+  batch_size: 2048
   normalize: True
   shuffle: True
   #noise_level: 0.0
 
 MODEL:
-  model_name: AttentionConditionalUnet1D
+  model_name: AttentionConditionalUnet1DBase
   PARAMS: # arguments that will be passed to the chosen models
     timesteps: 50
     input_dim: 3
     embedding_dim: 3
     diffusion_step_embed_dim: 32
-    down_dims: {32, 64, 128}
+    down_dims: {16, 32, 64}
     kernel_size: 3
     num_heads: 1
     exclude_first: 14
     beta_start: 1.0e-4
     beta_end: 0.3
     beta_schedule: scaled_linear
-    # prediction_type: sample
+    prediction_type: sample
 
 TRAINING: # arguments that will be passed to the trainer
   criterion_str: MSELoss
@@ -30,5 +30,6 @@ TRAINING: # arguments that will be passed to the trainer
       lr: 0.0005
       # weight_decay: 1.0e-6
   epochs: 1000
-  logdir: "./logs/Attention_UNet_DDPM/record_/"
+  logdir: "./logs/Attention_UNet_DDPM/trot_grid/"
   use_logger: True
+  ema_power: 0.99

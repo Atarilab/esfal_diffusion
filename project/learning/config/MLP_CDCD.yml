@@ -1,32 +1,38 @@
 DATA:
-  dataset: "trot"
+  dataset: "trot_grid"
   data_dir: "/home/atari_ws/data/"
-  batch_size: 128
-  return_index: False
+  batch_size: 1024
+  return_index: True
   augmentation: False
   shuffle: False
-  noise_level: 0.001
 
 MODEL:
-  model_name: MLP
+  model_name: ConditionalMLP_CDCD
   PARAMS: # arguments that will be passed to the chosen models
-    input_dim: 285
-    output_dim: 24
+    timesteps: 200
+    diffusion_step_embed_dim: 128
+    input_dim: 3
+    output_dim: 81
+    latent_dim: 256
     n_hidden: 3
-    latent_dim: 64
+    exclude_first: 14
+    beta_start: 1.0e-4
+    beta_end: 0.3
+    beta_schedule: scaled_linear
+    prediction_type: sample
 
 TRAINING: # arguments that will be passed to the trainer
-  criterion_str: MSELoss
+  criterion_str: CrossEntropyLoss
   optimizer:
     optimizer_name: Adam
-  lr: 0.001
+  lr: 0.0001
   epochs: 1000
-  logdir: "./logs/MLP/trot"
+  logdir: "./logs/MLP_CDCD/trot_grid"
   use_logger: True
   # lr_scheduler:
   #   lr_scheduler_name: ExponentialLR
   #   PARAMS:
-  #     gamma: 0.9985
+  #     gamma: 0.98
 
 # SWEEP: # arguments to sweep over and their values
 #   latent_dim: [32, 64]

@@ -18,8 +18,6 @@ import math
 import torch
 import torch.nn as nn
 
-from .DDPM import DDPM
-
 class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -252,7 +250,7 @@ class AttentionConditionalUnet1DBase(ConditionalUnet1DBase):
         diffusion_step_embed_dim=256,
         down_dims=[256,512,1024],
         kernel_size=5,
-        n_groups=8,
+        n_groups=4,
         exclude_first:int=0,
         **kwargs,
         ):
@@ -275,23 +273,17 @@ class AttentionConditionalUnet1DBase(ConditionalUnet1DBase):
         self.attention = nn.MultiheadAttention(input_dim,
                                                self.num_heads,
                                                batch_first=True,
-                                               kdim=embedding_dim,
-                                               vdim=embedding_dim,
+                                               dropout=0.2,
                                                )
-        
-        if embedding_dim == input_dim:
-            self.embedding = nn.Identity()
-        else:
-            self.embedding = nn.Linear(input_dim, embedding_dim)
+        self.embedding = nn.Linear(input_dim, input_dim * 4)
         self.norm = nn.BatchNorm1d(self.exclude_first)
         self.flatten = nn.Flatten()
-        self.softmax = nn.Softmax(-1)
     
-
     def forward(self,
                 noisy_data_samples: torch.Tensor,
                 timestep: torch.Tensor=None,
-                global_cond=None):
+                global_cond=None,
+                **kwargs):
         """
         noisy_data_samples: (B,T,input_dim)
         timestep: (B,) or int, diffusion step
@@ -304,53 +296,50 @@ class AttentionConditionalUnet1DBase(ConditionalUnet1DBase):
 
             if self.exclude_first > 0:
                 query = global_cond[:, :self.exclude_first, :]
-                out, att = self.attention(query,
-                                          self.embedding(global_cond[:, self.exclude_first:, :]),
-                                          self.embedding(global_cond[:, self.exclude_first:, :])) # [B, exclude_first, E], [B, exclude_first, T - exclude_first]
-                self.att_prob = self.softmax(att)
-                #max_prob, _ = torch.max(self.att_prob, axis=-1)
-                #print(max_prob)
+                k = global_cond[:, self.exclude_first:, :]
+                out, _ = self.attention(query, k, k) # [B, exclude_first, E], [B, exclude_first, T - exclude_first]
+
                 global_cond = self.flatten(self.norm(out + query))
         
         return super().forward(noisy_data_samples, timestep, global_cond)
     
-class ConditionalUnet1D(DDPM):
-    def __init__(self,
-        input_dim,
-        global_cond_dim,
-        diffusion_step_embed_dim=256,
-        down_dims=[256,512,1024],
-        kernel_size=5,
-        n_groups=8,
-        **kwargs) -> None:
+# class ConditionalUnet1D(DDPM):
+#     def __init__(self,
+#         input_dim,
+#         global_cond_dim,
+#         diffusion_step_embed_dim=256,
+#         down_dims=[256,512,1024],
+#         kernel_size=5,
+#         n_groups=8,
+#         **kwargs) -> None:
 
-        model = ConditionalUnet1DBase(
-            input_dim,
-            global_cond_dim,
-            diffusion_step_embed_dim,
-            down_dims,
-            kernel_size,
-            n_groups,
-        )
-        super().__init__(model, **kwargs)
+#         model = ConditionalUnet1DBase(
+#             input_dim,
+#             global_cond_dim,
+#             diffusion_step_embed_dim,
+#             down_dims,
+#             kernel_size,
+#             n_groups,
+#         )
+#         super().__init__(model, **kwargs)
 
-class AttentionConditionalUnet1D(DDPM):
-    def __init__(self,
-        input_dim,
-        embedding_dim,
-        diffusion_step_embed_dim=256,
-        down_dims=[256,512,1024],
-        kernel_size=5,
-        n_groups=8,
-        **kwargs) -> None:
+# class AttentionConditionalUnet1D(DDPM):
+#     def __init__(self,
+#         input_dim,
+#         embedding_dim,
+#         diffusion_step_embed_dim=256,
+#         down_dims=[256,512,1024],
+#         kernel_size=5,
+#         n_groups=8,
+#         **kwargs) -> None:
 
-        model = AttentionConditionalUnet1DBase(
-            input_dim,
-            embedding_dim,
-            diffusion_step_embed_dim,
-            down_dims,
-            kernel_size,
-            n_groups,
-            **kwargs
-        )
-        super().__init__(model, **kwargs)
+#         model = AttentionConditionalUnet1DBase(
+#             input_dim,
+#             embedding_dim,
+#             diffusion_step_embed_dim,
+#             down_dims,
+#             kernel_size,
+#             n_groups,
+#             **kwargs
+#         )
+#         super().__init__(model, **kwargs)

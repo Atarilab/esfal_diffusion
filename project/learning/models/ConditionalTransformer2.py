@@ -4,12 +4,6 @@ import torch.nn.functional as F
 from copy import deepcopy
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
-try:
-    from .DDPM import DDPM
-    from .CDCD import CDCD
-except:
-    from models.DDPM import DDPM
-    from models.CDCD import CDCD
 
 class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
@@ -45,7 +39,7 @@ class TransformerBlockConditioned(nn.Module):
         self.linear1 = nn.Linear(input_dim, hidden_dim)
         self.linear2 = nn.Linear(input_dim, hidden_dim)
         self.dropout = nn.Dropout(dropout)
-        self.activation = nn.ReLU()
+        self.activation = nn.Mish()
 
         self.attn_weights = None
 
@@ -99,7 +93,7 @@ class CDCDTransformerConditionedBase2(nn.Module):
                  n_layers:int,
                  num_heads:int=-1,
                  dropout:float=0.1,
-                 temperature:float=1.,
+                 **kwargs,
                  ) -> None:
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -143,7 +137,7 @@ class CDCDTransformerConditionedBase2(nn.Module):
             ])
         
         self.film_blocks = nn.ModuleList([
-                FiLM(11, hidden_dim)
+                FiLM(exclude_first + 1, hidden_dim)
                 for l in range(n_layers)
             ])
         
@@ -168,18 +162,18 @@ class CDCDTransformerConditionedBase2(nn.Module):
         condition = rearrange(condition, "b (l c) -> b l c", c = 3)
         state, locations = torch.split(condition, [self.exclude_first, condition.shape[1] - self.exclude_first], dim=1)
         locations_copy = deepcopy(locations)
-        x_copy = x
+        # x_copy = x
 
         # Embedding
         state = self.state_embedding(state)
         locations = self.contact_embedding(locations)
         x = self.x_embedding(x)
-        t = self.pose_embedding(t).unsqueeze(-2)
+        t_embed = self.pose_embedding(t).unsqueeze(-2)
         if self_conditioning != None:
             self_conditioning = self.contact_embedding(self_conditioning)
             x = torch.cat((x, self_conditioning), dim=1)
 
-        t_state = torch.cat((t, state), dim=1)
+        t_state = torch.cat((t_embed, state), dim=1)
 
         # Encoder
         # Cross attention transformer
@@ -188,55 +182,52 @@ class CDCDTransformerConditionedBase2(nn.Module):
             locations = film(locations, t_state)
 
         # Logits
-        logits = self.V_logits(locations).squeeze(-1)
-
+        logits = self.V_logits(locations).squeeze(-1)# / t.reshape(B, 1, 1)
         # Compute expectation
         probs = torch.nn.functional.softmax(logits, dim=1).unsqueeze(dim=-1)
         expectation = torch.sum(probs * locations_copy.unsqueeze(dim=-2), dim=1)
-        
+
         # Shift predictions to match the whole sequence
-        fill_logits = torch.full((B, self.exclude_first, self.output_length), -torch.inf)
-        logits = torch.cat((fill_logits, logits), dim=1)
         self.max_probs, self.pointers = torch.max(probs, dim=1, keepdim=True)
-        self.pointers = self.pointers.squeeze(1) + self.exclude_first
-        self.selected = torch.take_along_dim(condition, self.pointers, dim=1)
+        self.pointers = self.pointers.squeeze(1)
+        self.selected = torch.take_along_dim(locations_copy, self.pointers, dim=1)
 
         if return_logits:
             return logits, expectation
 
         return expectation
 
-class CDCDTransformerConditioned2(CDCD):
-    def __init__(self,
-                output_length:int,
-                exclude_first:int,
-                hidden_dim:int,
-                n_layers:int,
-                num_heads:int=-1,
-                dropout:float=0.1,
-                **kwargs,
-                ) -> None:
+# class CDCDTransformerConditioned2(CDCD):
+#     def __init__(self,
+#                 output_length:int,
+#                 exclude_first:int,
+#                 hidden_dim:int,
+#                 n_layers:int,
+#                 num_heads:int=-1,
+#                 dropout:float=0.1,
+#                 **kwargs,
+#                 ) -> None:
     
-        model = CDCDTransformerConditionedBase2(
-            output_length,
-            exclude_first,
-            hidden_dim,
-            n_layers,
-            num_heads,
-            dropout
-        )
+#         model = CDCDTransformerConditionedBase2(
+#             output_length,
+#             exclude_first,
+#             hidden_dim,
+#             n_layers,
+#             num_heads,
+#             dropout
+#         )
 
-        super().__init__(model, **kwargs)
+#         super().__init__(model, **kwargs)
 
-if __name__ == "__main__":
-    H = 64
-    N_LAYERS = 4
-    DROPOUT = 0.1
-    OUTPUT_LENGTH = 8
-    XCLUDE = 10
-    model = TransformerConditioned(OUTPUT_LENGTH, XCLUDE, H, N_LAYERS, DROPOUT)
+# if __name__ == "__main__":
+#     H = 64
+#     N_LAYERS = 4
+#     DROPOUT = 0.1
+#     OUTPUT_LENGTH = 8
+#     XCLUDE = 10
+#     model = TransformerConditioned(OUTPUT_LENGTH, XCLUDE, H, N_LAYERS, DROPOUT)
 
-    dummy_input = torch.rand(2, 91, 3)
-    out = model(dummy_input)
+#     dummy_input = torch.rand(2, 91, 3)
+#     out = model(dummy_input)
 
-    print(out.shape)
+#     print(out.shape)

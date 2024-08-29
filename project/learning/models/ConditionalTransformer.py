@@ -4,12 +4,6 @@ import torch.nn.functional as F
 from copy import deepcopy
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
-try:
-    from .DDPM import DDPM
-    from .CDCD import CDCD
-except:
-    from models.DDPM import DDPM
-    from models.CDCD import CDCD
 
 class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
@@ -247,37 +241,37 @@ class CDCDTransformerConditionedBase(nn.Module):
         
         return expectation
 
-class CDCDTransformerConditioned(CDCD):
-    def __init__(self,
-                output_length:int,
-                exclude_first:int,
-                hidden_dim:int,
-                n_layers:int,
-                num_heads:int=-1,
-                dropout:float=0.1,
-                **kwargs,
-                ) -> None:
+# class CDCDTransformerConditioned(CDCD):
+#     def __init__(self,
+#                 output_length:int,
+#                 exclude_first:int,
+#                 hidden_dim:int,
+#                 n_layers:int,
+#                 num_heads:int=-1,
+#                 dropout:float=0.1,
+#                 **kwargs,
+#                 ) -> None:
     
-        model = CDCDTransformerConditionedBase(
-            output_length,
-            exclude_first,
-            hidden_dim,
-            n_layers,
-            num_heads,
-            dropout
-        )
+#         model = CDCDTransformerConditionedBase(
+#             output_length,
+#             exclude_first,
+#             hidden_dim,
+#             n_layers,
+#             num_heads,
+#             dropout
+#         )
 
-        super().__init__(model, **kwargs)
+#         super().__init__(model, **kwargs)
 
-if __name__ == "__main__":
-    H = 64
-    N_LAYERS = 4
-    DROPOUT = 0.1
-    OUTPUT_LENGTH = 8
-    XCLUDE = 10
-    model = TransformerConditioned(OUTPUT_LENGTH, XCLUDE, H, N_LAYERS, DROPOUT)
+# if __name__ == "__main__":
+#     H = 64
+#     N_LAYERS = 4
+#     DROPOUT = 0.1
+#     OUTPUT_LENGTH = 8
+#     XCLUDE = 10
+#     model = TransformerConditioned(OUTPUT_LENGTH, XCLUDE, H, N_LAYERS, DROPOUT)
 
-    dummy_input = torch.rand(2, 91, 3)
-    out = model(dummy_input)
+#     dummy_input = torch.rand(2, 91, 3)
+#     out = model(dummy_input)
 
-    print(out.shape)
+#     print(out.shape)

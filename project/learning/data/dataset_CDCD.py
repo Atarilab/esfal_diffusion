@@ -174,22 +174,20 @@ class JumpDataset(Dataset):
                         s += 1
                         if (record_target_contact_id[i][4:] == start_pos).all():
                             continue
-                        for x_sym in self.sym:
-                            for y_sym in self.sym:
-                                states.append(get_symmetric_state(record_state[i], x_sym, y_sym))
-                                goals.append(apply_symmetry_3d_points(goal_pos_w, x_sym, y_sym))
-                                feet_contacts.append(apply_symmetry_3d_points(record_feet_contact[i], x_sym, y_sym))
-                                target_contacts.append(apply_symmetry_3d_points(record_target_contact[i], x_sym, y_sym))
-                                stones_pos_all.append(apply_symmetry_3d_points(record_stones_pos_w, x_sym, y_sym))
-                                target_contact_ids.append(record_target_contact_id[i])
-                                N_samples += 1
+
+                        states.append(record_state[i])
+                        goals.append(goal_pos_w)
+                        feet_contacts.append(record_feet_contact[i])
+                        target_contacts.append(record_target_contact[i])
+                        stones_pos_all.append(record_stones_pos_w)
+                        target_contact_ids.append(record_target_contact_id[i])
+                        N_samples += 1
 
         states = np.array(states)
         goals = np.array(goals)
         velocities = states[:, 7+12:7+12+6]
         feet_contacts = np.array(feet_contacts)
         target_contacts = np.array(target_contacts)
-        target_contacts[:, :, -1] = 0.
         target_contact_ids = np.array(target_contact_ids)
         stones_pos_all = np.array(stones_pos_all)
 
@@ -267,35 +265,76 @@ class JumpDataset(Dataset):
         feet_contact_base = self.data[CONTACT_NAME][idx]
         velocities = self.data[VELOCITY_NAME][idx]
         stones_pos_base = self.data[STONES_NAME][idx]
-        target_locations = self.data[TARGET_NAME][idx].reshape(-1, 3) if not self.return_index else self.data[TARGET_ID_NAME][idx]
+        target_locations = self.data[TARGET_NAME][idx].reshape(-1, 3)
+        target_index = self.data[TARGET_ID_NAME][idx]
 
         state_goal_conditioning = torch.cat((goal_contact_base, feet_contact_base, velocities, join_pos, stones_pos_base)).reshape(-1, 3)
 
         batch = {
             "data": target_locations,
             "condition": state_goal_conditioning,
+            "index" : target_index,
         }
         return batch
+    
+
+def create_batched_index_tensor(N, exclude_batch):
+    B, T = exclude_batch.shape  # Get the batch size (B) and number of exclusions per batch (T)
+
+    # Create a tensor of all indices from 0 to N-1, and expand it to match the batch size
+    all_indices = torch.arange(N).unsqueeze(0).expand(B, N)  # Shape: [B, N]
+    
+    # Create a mask tensor initialized to True
+    mask = torch.ones((B, N), dtype=torch.bool)
+    
+    # Mark the excluded indices as False
+    mask.scatter_(1, exclude_batch, False)
+    
+    # Apply the mask to get the desired indices
+    valid_indices = torch.masked_select(all_indices, mask).view(B, -1)
+    
+    return valid_indices
 
 def shuffle_collate(batch):
     condition = torch.stack([d["condition"] for d in batch], dim=0)
     data = torch.stack([d["data"] for d in batch], dim=0)
+    target_indices = torch.stack([d["index"] for d in batch], dim=0)
     B = len(data)
     condition = condition.reshape(B, -1, 3)
-    n_state = 14
-    n_boxes = condition.shape[1] - n_state
-    shuffle_indices = torch.hstack((torch.arange(n_state), torch.randperm(n_boxes) + n_state)).unsqueeze(-1).unsqueeze(0) # Shuffle boxes
-
-    # Shuffle inputs along dimension 1
-    shuffled_condition = torch.take_along_dim(condition, shuffle_indices, dim=1).reshape(B, -1)
+    N_state = 14
+    N = condition.shape[1] - N_state
+    T = target_indices.shape[-1]
+    state, cnt_locations = torch.split(condition, [N_state, N], dim=1)
     
-    shuffled_condition
+    # Sample new target indices
+    permutation = torch.rand(B, N).argsort (dim = 1) 
+
+    # Split the permutation into targets and remaining indices
+    shuffled_target_id, shuffled_remaining_id = torch.split(permutation, [T, N - T], dim=1)
+
+    # Compute remaining indices (that are not targets)
+    all_remaining_id = create_batched_index_tensor(N, exclude_batch=shuffled_target_id)
+
+    # Initialize the shuffled contact locations tensor
+    shuffled_cnt_locations = torch.empty_like(cnt_locations)
+
+    # Assign the target contact locations to their shuffled positions
+    shuffled_cnt_locations.scatter_(1, shuffled_target_id.unsqueeze(-1).expand(-1, -1, 3), cnt_locations.gather(1, target_indices.unsqueeze(-1).expand(-1, -1, 3)))
+
+    # Assign the remaining contact locations to the remaining shuffled positions
+    shuffled_cnt_locations.scatter_(1, shuffled_remaining_id.unsqueeze(-1).expand(-1, -1, 3), cnt_locations.gather(1, all_remaining_id.unsqueeze(-1).expand(-1, -1, 3)))
+
+    # Add the state data
+    shuffled_condition = torch.cat(
+        (state, shuffled_cnt_locations), dim=1
+    )
     
     shuffled_batch = {
-        "data" : data,
-        "condition" : shuffled_condition,
+        "data": data,
+        "condition": shuffled_condition,
+        "index" : shuffled_target_id,
     }
-    
+
     return shuffled_batch
 
 def get_dataloaders(data_dir, 
@@ -305,6 +344,7 @@ def get_dataloaders(data_dir,
                     shuffle:bool=True, 
                     train_only=False, 
                     normalize=False):
+    
     train_data_path = os.path.join(data_dir, dataset, "train")
     if not os.path.exists(train_data_path):
         train_data_path = os.path.join(data_dir, dataset)
@@ -328,6 +368,9 @@ def get_dataloaders(data_dir,
     
     batch = next(iter(train_dataloader))
 
+    print("Number of samples:")
+    print("Train:", len(train_dataset))
+    if test_dataset != None: print("Test:", len(test_dataset))
     print("Train batch shape:")
     for key, value in batch.items():
         print(key, ":", list(value.shape))

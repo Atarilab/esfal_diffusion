@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from einops import rearrange, repeat
-from .DDPM import DDPM
 
 class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
@@ -65,17 +64,17 @@ class ConditionalMLPBase(nn.Module):
         return x
     
 
-class ConditionalMLP(DDPM):
-    def __init__(self,
-                 input_dim,
-                 diffusion_step_embed_dim:int=32,
-                 hidden_dim=128,
-                 num_layers=4,
-                 **kwargs):
-        model = ConditionalMLPBase(
-            input_dim,
-            diffusion_step_embed_dim,
-            hidden_dim,
-            num_layers
-        )
-        super().__init__(model, **kwargs)
+# class ConditionalMLP(DDPM):
+#     def __init__(self,
+#                  input_dim,
+#                  diffusion_step_embed_dim:int=32,
+#                  hidden_dim=128,
+#                  num_layers=4,
+#                  **kwargs):
+#         model = ConditionalMLPBase(
+#             input_dim,
+#             diffusion_step_embed_dim,
+#             hidden_dim,
+#             num_layers
+#         )
+#         super().__init__(model, **kwargs)
