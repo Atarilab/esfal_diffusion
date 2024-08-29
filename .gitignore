@@ -2,6 +2,7 @@ data/*
 project/figures/videos/*
 notebooks
 record_data.sh
+MUJOCO_LOG.TXT
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
