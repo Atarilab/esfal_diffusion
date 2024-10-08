@@ -6,11 +6,9 @@ import os
 from .config import Config
 
 class SweepParametersConfig():
-    def __init__(self,
-                 cfg:Config,
-                 swp_cfg:dict={}) -> None:
+    def __init__(self, cfg:Config) -> None:
         self.cfg = cfg
-        self.swp_cfg = swp_cfg if swp_cfg != None else {}
+        self.swp_cfg = self.cfg.sweep()[1]
 
         self.params, self.param_combinations = self.generate_cartesian_product()
         self.current_combination_id = 0

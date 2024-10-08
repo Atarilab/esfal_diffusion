@@ -1,41 +1,26 @@
 DATA:
-  dataset: "jump_forward"
-  data_dir: "/home/atari_ws/data/"
-  batch_size: 128
-  return_index: False
-  augmentation: False
-  shuffle: False
-  noise_level: 0.0
+  name: MCTSDataset
+  PARAMS:
+    exp_dir: "/home/atari_ws/data/jump/train"
+    batch_size: 32
+    shuffle_period: 0
 
 MODEL:
-  model_name: MLP
+  name: MLP
   PARAMS: # arguments that will be passed to the chosen models
     input_dim: 285
     output_dim: 24
     n_hidden: 3
     latent_dim: 128
+    dropout: 0.3
 
-TRAINING: # arguments that will be passed to the trainer
-  criterion_str: MSELoss
-  optimizer:
-    optimizer_name: Adam
-  lr: 0.001
-  epochs: 2000
-  logdir: "./logs/MLP/jump_forward"
-  use_logger: True
-  # lr_scheduler:
-  #   lr_scheduler_name: ExponentialLR
-  #   PARAMS:
-  #     gamma: 0.9985
-
-# SWEEP: # arguments to sweep over and their values
-#   latent_dim: [32, 64]
-#   points_per_circle:
-#     min: 3
-#     max: 10
-#     n: 3
-#   lr:
-#     min: 0.0001
-#     max: 0.001
-#     n: 2
-#     logspace: True
+TRAINER: # arguments that will be passed to the trainer
+  name: "supervised"
+  PARAMS:
+    criterion_str: MSELoss
+    optimizer:
+      optimizer_name: Adam
+    lr: 5.0e-4
+    epochs: 2000
+    logdir: "./logs/MLP/jump"
+    use_logger: True

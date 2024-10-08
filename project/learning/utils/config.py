@@ -1,22 +1,25 @@
 import yaml
 import os
 import shutil
-from typing import List
-
-DATA_KEY = "data"
-MODEL_KEY = "model"
-TARINING_KEY = "training"
-SWEEP_KEY = "sweep"
+from typing import List, Tuple
 
 class Config():
+
+    DATA_KEY = "data"
+    MODEL_KEY = "model"
+    TRAINER_KEY = "trainer"
+    SWEEP_KEY = "sweep"
+    
+    VALID_KEYS = [
+        DATA_KEY,
+        MODEL_KEY,
+        TRAINER_KEY,
+        SWEEP_KEY,
+    ]
+
     def __init__(self, config_path) -> None:
         self.config_path = config_path
         self.data_cfg = self._load_parameters_from_yaml()
-
-        self.data = self.get_value(DATA_KEY) if self.get_value(DATA_KEY) != None else {}
-        self.model = self.get_value(MODEL_KEY) if self.get_value(MODEL_KEY) != None else {}
-        self.training = self.get_value(TARINING_KEY) if self.get_value(TARINING_KEY) != None else {}
-        self.sweep = self.get_value(SWEEP_KEY) if self.get_value(SWEEP_KEY) != None else {}
 
     def _load_parameters_from_yaml(self):
         with open(self.config_path, 'r') as file:
@@ -81,3 +84,33 @@ class Config():
             path = os.path.join(path, "config.yaml")
 
         shutil.copy(self.config_path, path)
+    
+    def _get_name_params(self, cfg_key : str) -> Tuple[str, dict]:
+        
+        if not cfg_key in Config.VALID_KEYS:
+            raise ValueError(f"Config key '{cfg_key}' not valid.")
+        
+        cfg_full = self.get_value(cfg_key)
+        if cfg_full is None:
+            name = ""
+            cfg_params = {}
+        else:
+            name = cfg_full.get("name", "")
+            if name:
+                cfg_params = cfg_full["PARAMS"]
+            else:
+                cfg_params = cfg_full
+            
+        return name, cfg_params
+        
+    def data(self) -> Tuple[str, dict]:
+        return self._get_name_params(Config.DATA_KEY)
+    
+    def trainer(self) -> Tuple[str, dict]:
+        return self._get_name_params(Config.TRAINER_KEY)
+    
+    def model(self) -> Tuple[str, dict]:
+        return self._get_name_params(Config.MODEL_KEY)
+    
+    def sweep(self) -> Tuple[str, dict]:
+        return self._get_name_params(Config.SWEEP_KEY)

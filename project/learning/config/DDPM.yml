@@ -1,13 +1,13 @@
-DATA: # arguments that will be passed to get_dataloaders
-  dataset: "record_"
-  data_dir: "/home/atari_ws/data/"
-  batch_size: 512
-  normalize: True
-  shuffle: True
-  #noise_level: 0.0
+DATA:
+  name: MCTSDataset
+  PARAMS:
+    exp_dir: "/home/atari_ws/data/jump/train"
+    batch_size: 32
+    shuffle_period: 0
+    ddpm: True
 
 MODEL:
-  model_name: AttentionConditionalUnet1D
+  name: AttentionConditionalUnet1D
   PARAMS: # arguments that will be passed to the chosen models
     timesteps: 50
     input_dim: 3
@@ -17,18 +17,20 @@ MODEL:
     kernel_size: 3
     num_heads: 1
     exclude_first: 14
-    beta_start: 1.0e-4
+    beta_start: 1.0e-3
     beta_end: 0.3
     beta_schedule: scaled_linear
-    # prediction_type: sample
+    prediction_type: epsilon
 
-TRAINING: # arguments that will be passed to the trainer
-  criterion_str: MSELoss
-  optimizer:
-    optimizer_name: AdamW 
-    PARAMS:
-      lr: 0.0005
-      # weight_decay: 1.0e-6
-  epochs: 1000
-  logdir: "./logs/Attention_UNet_DDPM/record_/"
-  use_logger: True
+TRAINER: # arguments that will be passed to the trainer
+  name: "ddpm"
+  PARAMS:
+    criterion_str: MSELoss
+    optimizer:
+      optimizer_name: AdamW
+      PARAMS:
+        lr: 5.0e-4
+        weight_decay: 1.0e-5
+    epochs: 1000
+    logdir: "./logs/UNet_DDPM/jump/"
+    use_logger: True
