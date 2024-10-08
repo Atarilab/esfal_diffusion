@@ -3,7 +3,7 @@ DATA:
   PARAMS:
     exp_dir: "/home/atari_ws/data/jump/train"
     batch_size: 32
-    shuffle_period: 0
+    shuffle_period: 1
     ddpm: True
 
 MODEL:

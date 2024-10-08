@@ -54,12 +54,12 @@ class MCTSDataset(Dataset):
         self.stats_file = stats_file
         self.transform_to_base_frame = transform_to_base_frame
         self.current_step = 0
-        self.shuffle_period = shuffle_period
         self.return_index = return_index
         self.ddpm = ddpm
         
         # Load the dataset
         self.data = self.load_data()
+        self.shuffle_period = shuffle_period * self.N_samples
 
         # Apply normalization if requested
         if self.normalize:
@@ -114,12 +114,12 @@ class MCTSDataset(Dataset):
         self.goals_w = np.array(goals_w)
         self.feet_pos_w = np.array(feet_pos_w)
         self.target_contacts_w = np.array(target_contacts_w)
-        self.target_contact_ids = torch.tensor(np.array(target_contact_ids))
+        self.target_contact_ids = torch.tensor(np.array(target_contact_ids)).long()
         self._batch_world_to_base_frame()
         
         # Setup copy for shuffled tensor
         self.target_contact_ids_ = torch.clone(self.target_contact_ids)
-        self.cnt_pos_b_ = torch.clone(self.cnt_pos_b)
+        self.cnt_pos_b_ = torch.clone(self.cnt_pos_b).reshape(self.N_samples, -1, 3)
         
         # Normalize the data if requested
         if self.normalize:
@@ -254,7 +254,7 @@ class MCTSDataset(Dataset):
 
     def shuffle_all_contacts(self):
         """Shuffle the contact locations for the entire dataset."""
-        for i, cnt_pos_b, target_index in enumerate(zip(self.cnt_pos_b, self.target_contact_ids)):
+        for i, (cnt_pos_b, target_index) in enumerate(zip(self.cnt_pos_b, self.target_contact_ids)):
             cnt_pos_b = cnt_pos_b.reshape(-1, 3)
 
             # Get unique indices
@@ -271,7 +271,7 @@ class MCTSDataset(Dataset):
             # Precompute remaining indices for efficient access
             all_indices = torch.arange(N_cnt).long()
             mask = torch.ones_like(all_indices, dtype=torch.bool)
-            mask.scatter_(0, torch.tensor(target_index).long(), False)
+            mask.scatter_(0, target_index.clone().long(), False)
             remaining_indices = all_indices[mask]
 
             # Shuffle contact locations within the dataset itself
@@ -284,6 +284,7 @@ class MCTSDataset(Dataset):
         self.current_step += 1
         if self.shuffle_period > 0 and self.current_step % self.shuffle_period == 0:
             self.shuffle_all_contacts()
+            self.current_step = 0
 
     def __len__(self):
         return self.N_samples
@@ -297,7 +298,7 @@ class MCTSDataset(Dataset):
             self.feet_pos_b[idx],
             self.velocities[idx],
             self.qj[idx],
-            self.cnt_pos_b_[idx]
+            self.cnt_pos_b_[idx].reshape(-1)
         ))
 
         # Diffusion model
