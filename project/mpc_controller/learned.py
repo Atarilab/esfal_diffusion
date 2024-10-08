@@ -9,7 +9,7 @@ import pickle
 from environment.stepping_stones import SteppingStonesEnv
 from mpc_controller.bicon_mpc import BiConMPC
 from py_pin_wrapper.abstract.robot import SoloRobotWrapper
-from learning.utils.utils import get_model, get_config
+from learning.utils.model_utils import get_model_and_config
 
 NORMALIZATION_STATS = "normalization_stats.pkl"
 STATE_NAME = "state"
@@ -51,26 +51,22 @@ class MPC_LearnedContactPlanner(BiConMPC):
         self.stones_env = stepping_stones_env
         self.i_cnt_replan = 0
         self.model_path = model_path
-        self.model = get_model(state_path=model_path).to(self.device)
+        self.model, config = get_model_and_config(model_path)
+        self.model = self.model.to(self.device)
+        
+        cfg_dict = config.get_cfg_as_dict()
+        self.normalized = cfg_dict.get("normalized", False)
         
         self.data_stats = {}
-        self.load_data_stats()
+        if self.normalized:
+            norm_file_path = os.path.join(cfg_dict.get("exp_dir", ""),  NORMALIZATION_STATS)
+            self.load_data_stats(norm_file_path)
         
-    def load_data_stats(self):
-        cfg = get_config(state_path=self.model_path)
-        cfg_dict = cfg.get_cfg_as_dict()
-        normalized = cfg_dict.get("normalized", False)
+    def load_data_stats(self, norm_file_path:str):
+        if os.path.exists(norm_file_path):
+            self.data_stats = self.load_data_stats_file(norm_file_path)
+            self.get_mean_std_vectors()
         
-        if normalized:
-            data_dir = cfg_dict.get("data_dir", "")
-            dataset = cfg_dict.get("dataset", "")
-            dataset_dir = os.path.join(data_dir, dataset)
-            data_stats_file = os.path.join(dataset_dir,  NORMALIZATION_STATS)
-            
-            if os.path.exists(data_stats_file):
-                self.data_stats = self.load_data_stats_file(data_stats_file)
-                self.get_mean_std_vectors()
-            
     def load_data_stats_file(self, file_path : str) -> Dict[str, Tuple[float, float]]:
         with open(file_path, 'rb') as f:
             return pickle.load(f)
@@ -200,8 +196,8 @@ class MPC_LearnedContactPlanner(BiConMPC):
                             num_inference_steps=self.diffusion_steps
                             )
                         # CDCD
-                        if hasattr(self.model.eps_model, "pointers"):
-                            outputs_b = self.model.eps_model.selected
+                        if hasattr(self.model.model, "pointers"):
+                            outputs_b = self.model.model.selected
                             #max_probs = self.model.eps_model.max_probs.squeeze().detach().numpy()
                     else:
                         outputs_b = self.model(input_array)

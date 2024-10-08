@@ -434,10 +434,10 @@ class SteppingStonesSimulator(Simulator):
         self.set_start_and_goal(contact_plan_id[0], contact_plan_id[-1], randomize_state=randomize)
 
         # Set goal for learned and raibert controller
-        try:
-            self.controller.set_goal(contact_plan_id[-1])
-        except:
-            print("Cannot set goal to the controller.")
+        # try:
+        #     self.controller.set_goal(contact_plan_id[-1])
+        # except:
+        #     print("Cannot set goal to the controller.")
             
         # Set contact plan
         self.contact_plan_id = contact_plan_id
@@ -445,7 +445,7 @@ class SteppingStonesSimulator(Simulator):
         
         # Randomize contact plan
         if randomize:
-            contact_plan_pos[:, :, :2] += np.random.randn(*contact_plan_pos[:, :, :2].shape) * 8.e-3
+            contact_plan_pos[:, :, :2] += np.random.randn(*contact_plan_pos[:, :, :2].shape) * 3.e-3
         
         self.controller.set_contact_plan(contact_plan_pos)
 
@@ -525,7 +525,7 @@ if __name__ == "__main__":
     from mpc_controller.motions.cyclic.solo12_trot import trot
     from mpc_controller.motions.cyclic.solo12_jump import jump
     from utils.rendering import desired_contact_locations_callback
-    from tree_search.data_recorder import JumpDataRecorder
+    from tree_search.data_recorder import ContactsDataRecorder
 
     
     stepping_stones_height = 0.1
@@ -542,7 +542,7 @@ if __name__ == "__main__":
     controller = BiConMPC(robot, height_offset=stepping_stones_height)
     controller.set_gait_params(jump)
     
-    data_recorder = JumpDataRecorder(robot, stones_env, "test")
+    data_recorder = ContactsDataRecorder(robot, stones_env, "test")
     
     sim = SteppingStonesSimulator(
         stepping_stones_env=stones_env,

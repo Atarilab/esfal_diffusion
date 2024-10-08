@@ -94,8 +94,8 @@ class SteppingStonesEnv:
         """
         Randomize the center of the stepping stones locations.
         """
-        max_displacement_x = self.spacing[0] - self.size
-        max_displacement_y = self.spacing[1] - self.size
+        max_displacement_x = (self.spacing[0] - self.size) / 2.
+        max_displacement_y = (self.spacing[1] - self.size) / 2.
         
         dx = np.random.uniform(-1., 1., self.N) * max_displacement_x * self.randomize_pos_ratio
         dy = np.random.uniform(-1., 1., self.N) * max_displacement_y * self.randomize_pos_ratio

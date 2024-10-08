@@ -1,4 +1,5 @@
 import numpy as np
+import tyro
 
 from utils.eval import PerformanceGatherer
 
@@ -117,6 +118,9 @@ class MCTSPerformancesEvaluation():
         
         
 
+def main(exp_dir : str):
+    perf_evaluation = MCTSPerformancesEvaluation(exp_dir)
+
 if __name__ == "__main__":
-    experiment_dir = "/home/atari_ws/data/trot/"
-    perf_evaluation = MCTSPerformancesEvaluation(experiment_dir)
+    args = tyro.cli(main)
+    

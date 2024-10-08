@@ -8,13 +8,13 @@ from environment.stepping_stones import SteppingStonesEnv
 
 
 ### Data recorder
-class JumpDataRecorder(DataRecorderAbstract):
+class ContactsDataRecorder(DataRecorderAbstract):
     FILE_NAME = "data.npz"
     STATE_NAME = "state"
-    CONTACT_NAME = "contact_w"
+    FEET_POS_NAME = "feet_pos_w"
     TARGET_NAME = "target_w"
     TARGET_ID_NAME = "target_id"
-    STONES_NAME = "stones_w"
+    CONTACT_NAME = "contact_w"
     GOAL_NAME = "goal_w"
     
     def __init__(self,
@@ -42,7 +42,7 @@ class JumpDataRecorder(DataRecorderAbstract):
         
     def update_record_dir(self, record_dir:str):
         os.makedirs(record_dir, exist_ok=True)
-        self.saving_file_path = os.path.join(record_dir, JumpDataRecorder.FILE_NAME)
+        self.saving_file_path = os.path.join(record_dir, ContactsDataRecorder.FILE_NAME)
 
     def reset(self) -> None:
         self.i_jump = 0
@@ -102,10 +102,10 @@ class JumpDataRecorder(DataRecorderAbstract):
                 
                 data = np.load(self.saving_file_path)
                 if data.keys():
-                    record_state = data[JumpDataRecorder.STATE_NAME]
-                    record_feet_contact = data[JumpDataRecorder.CONTACT_NAME]
-                    record_target_contact = data[JumpDataRecorder.TARGET_NAME]
-                    record_target_contact_id = data[JumpDataRecorder.TARGET_ID_NAME]
+                    record_state = data[ContactsDataRecorder.STATE_NAME]
+                    record_feet_contact = data[ContactsDataRecorder.FEET_POS_NAME]
+                    record_target_contact = data[ContactsDataRecorder.TARGET_NAME]
+                    record_target_contact_id = data[ContactsDataRecorder.TARGET_ID_NAME]
                     
                     # Concatenate
                     self.record_state = np.concatenate((record_state, self.record_state), axis = 0)
@@ -115,12 +115,12 @@ class JumpDataRecorder(DataRecorderAbstract):
             
             # Save with new data / save stones position /!\ overrides it
             d = {
-                JumpDataRecorder.STATE_NAME : self.record_state,
-                JumpDataRecorder.GOAL_NAME : self.goal_locations_w,
-                JumpDataRecorder.CONTACT_NAME : self.record_feet_pos_w,
-                JumpDataRecorder.TARGET_NAME : self.record_target_contact,
-                JumpDataRecorder.TARGET_ID_NAME : self.record_target_contact_id,
-                JumpDataRecorder.STONES_NAME : self.stepping_stones.positions,
+                ContactsDataRecorder.STATE_NAME : self.record_state,
+                ContactsDataRecorder.GOAL_NAME : self.goal_locations_w,
+                ContactsDataRecorder.FEET_POS_NAME : self.record_feet_pos_w,
+                ContactsDataRecorder.TARGET_NAME : self.record_target_contact,
+                ContactsDataRecorder.TARGET_ID_NAME : self.record_target_contact_id,
+                ContactsDataRecorder.CONTACT_NAME : self.stepping_stones.positions,
             }
             np.savez(self.saving_file_path, **d)
             
@@ -160,7 +160,7 @@ class JumpDataRecorder(DataRecorderAbstract):
         first_count, last_count = self.count_repeat()
 
         skip_first = max(0, first_count - 1)
-        skip_last = max(0, last_count - 2)
+        skip_last = max(0, last_count - 1)
         
         if lock:
             with lock:
@@ -179,7 +179,7 @@ from py_pin_wrapper.abstract.robot import SoloRobotWrapper
 from mpc_controller.bicon_mpc import BiConMPC
 from mpc_controller.motions.cyclic.solo12_trot import trot
 from mpc_controller.motions.cyclic.solo12_jump import jump
-from tree_search.data_recorder import JumpDataRecorder
+from tree_search.data_recorder import ContactsDataRecorder
 from environment.simulator import SteppingStonesSimulator
 
 
@@ -205,7 +205,7 @@ def record_one_environement(args):
     controller = BiConMPC(robot, height_offset=stepping_stones_height)
     controller.set_gait_params(jump)
     
-    data_recorder = JumpDataRecorder(robot, stones_env, f"{path}/env_{i_env}/goal_0/")
+    data_recorder = ContactsDataRecorder(robot, stones_env, f"{path}/env_{i_env}/goal_0/")
     
     sim = SteppingStonesSimulator(
         stepping_stones_env=stones_env,

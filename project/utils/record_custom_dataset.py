@@ -10,7 +10,7 @@ from py_pin_wrapper.abstract.robot import SoloRobotWrapper
 from mpc_controller.bicon_mpc import BiConMPC
 from mpc_controller.motions.cyclic.solo12_trot import trot
 from mpc_controller.motions.cyclic.solo12_jump import jump
-from tree_search.data_recorder import JumpDataRecorder
+from tree_search.data_recorder import ContactsDataRecorder
 from environment.simulator import SteppingStonesSimulator
 from environment.stepping_stones import SteppingStonesEnv
 
@@ -36,7 +36,7 @@ def record_one_environement(args):
     controller = BiConMPC(robot, height_offset=stepping_stones_height)
     controller.set_gait_params(jump)
     
-    data_recorder = JumpDataRecorder(robot, stones_env, f"{path}/env_{i_env}/goal_0/")
+    data_recorder = ContactsDataRecorder(robot, stones_env, f"{path}/env_{i_env}/goal_0/")
     
     sim = SteppingStonesSimulator(
         stepping_stones_env=stones_env,

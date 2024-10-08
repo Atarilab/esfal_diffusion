@@ -8,7 +8,7 @@ from mpc_controller.bicon_mpc import BiConMPC
 from mpc_controller.raibert import MPC_RaiberContactPlanner
 from mpc_controller.learned import MPC_LearnedContactPlanner
 from utils.rendering import desired_contact_locations_callback
-from tree_search.data_recorder import JumpDataRecorder
+from tree_search.data_recorder import ContactsDataRecorder
 from mpc_controller.motions.cyclic.solo12_trot import trot
 from mpc_controller.motions.cyclic.solo12_jump import jump
 

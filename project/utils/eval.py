@@ -15,10 +15,11 @@ from mpc_controller.bicon_mpc import BiConMPC
 from mpc_controller.motions.cyclic.solo12_trot import trot
 from mpc_controller.motions.cyclic.solo12_jump import jump
 from tree_search.mcts_stepping_stones import MCTSSteppingStonesKin
-from tree_search.data_recorder import JumpDataRecorder
+from tree_search.data_recorder import ContactsDataRecorder
 from tree_search.experiment_manager import ExperimentManager
 from mpc_controller.raibert import MPC_RaiberContactPlanner
 from mpc_controller.learned import MPC_LearnedContactPlanner
+
 
 class PerformanceGatherer:
     def __init__(self, experiment_dir : str):
@@ -136,7 +137,7 @@ class RerunExperiments:
         gait = jump if self.manager.gait == "jump" else trot
         controller.set_gait_params(gait)
                 
-        data_recorder = JumpDataRecorder(
+        data_recorder = ContactsDataRecorder(
             robot,
             stepping_stones_env,
             record_dir=rerun_goal_dir,

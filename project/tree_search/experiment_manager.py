@@ -15,7 +15,7 @@ from mpc_controller.bicon_mpc import BiConMPC
 from mpc_controller.motions.cyclic.solo12_trot import trot
 from mpc_controller.motions.cyclic.solo12_jump import jump
 from tree_search.mcts_stepping_stones import MCTSSteppingStonesKin
-from tree_search.data_recorder import JumpDataRecorder
+from tree_search.data_recorder import ContactsDataRecorder
 
 class ExperimentManager(object):
     DEFAULT_STEPPING_STONES_HEIGHT = 0.1
@@ -91,7 +91,7 @@ class ExperimentManager(object):
         gait = trot if self.gait == "trot" else jump
         controller.set_gait_params(gait)
         
-        data_recorder = JumpDataRecorder(
+        data_recorder = ContactsDataRecorder(
             robot,
             stones_env,
             record_dir=self.experiment_dir
@@ -158,16 +158,32 @@ class ExperimentManager(object):
                 
         mcts.sim.robot.env.disconnect()
         del mcts
-            
+             
     def start(self, n_cores : int = 10):
         """
         Launch experiment on different cores.
         """
-        N_old = len(list(filter(lambda path : os.path.isdir(os.path.join(self.experiment_dir, path)), os.listdir(self.experiment_dir))))
-        with multiprocessing.Pool(n_cores) as pool:
-            for _ in tqdm.tqdm(pool.imap_unordered(self.run_single_experiment, range(N_old, self.N_runs + N_old)), total=self.N_runs):
-                pass
-                  
+        # In case experiment is run in a existing directory. Set i_env accordingly
+        N_old_env = len(list(filter(lambda path : os.path.isdir(os.path.join(self.experiment_dir, path)), os.listdir(self.experiment_dir))))
+        
+        processes = []
+        for i_env in tqdm.trange(self.N_runs):
+            p = multiprocessing.Process(target=self.run_single_experiment, args=[i_env + N_old_env])
+            processes.append(p)
+            p.start()
+
+            # Maintain the number of concurrent processes
+            while len(processes) >= n_cores:
+                for p in processes:
+                    if not p.is_alive():
+                        processes.remove(p)
+                        break
+                time.sleep(0.1)  # Small sleep to avoid busy waiting
+
+        # Join any remaining processes
+        for p in processes:
+            p.join()
+    
     def gather_data_experiment(self):
         all_data = {}
         
@@ -179,7 +195,7 @@ class ExperimentManager(object):
                 goal_name = f"goal_{i_goal}"
                 goal_dir = os.path.join(env_dir, goal_name)
                 
-                file_path = os.path.join(goal_dir, JumpDataRecorder.FILE_NAME)
+                file_path = os.path.join(goal_dir, ContactsDataRecorder.FILE_NAME)
                 
                 if os.path.isfile(file_path):
                     with np.load(file_path) as data:
@@ -193,9 +209,9 @@ class ExperimentManager(object):
             all_data[key] = np.concatenate(all_data[key], axis=0)
         
         # Save combined data to a single .npz file
-        output_file = os.path.join(self.experiment_dir, JumpDataRecorder.FILE_NAME)
+        output_file = os.path.join(self.experiment_dir, ContactsDataRecorder.FILE_NAME)
         np.savez(output_file, **all_data)
-        
+    
     def gather_performance_data(self):
         all_performance_data = {}
 
@@ -238,6 +254,8 @@ class ExperimentManager(object):
             "mcts_W" : self.mcts_W,
             "mcts_alpha_exploration" : self.mcts_alpha_exploration,
             "mcts_sim_step" : self.mcts_sim_step,
+            "mcts_max_step_size" : self.mcts_max_step_size,
+            "mcts_n_it" : self.mcts_n_it,
             "size_ratio" : self.size_ratio,
             "gait" : self.gait,
         }
